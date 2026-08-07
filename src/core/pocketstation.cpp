@@ -90,7 +90,9 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, E
     return nullptr;
   }
 
-  VERBOSE_LOG("PocketStation booted and docked.");
+  ret->m_state_size = psemu_state_size(ret->m_ps);
+
+  VERBOSE_LOG("PocketStation booted and docked, state size {} bytes.", ret->m_state_size);
   return ret;
 }
 
@@ -131,15 +133,10 @@ bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data) const
   return true;
 }
 
-size_t PocketStation::GetStateSize() const
-{
-  return psemu_state_size(m_ps);
-}
-
 bool PocketStation::DoState(StateWrapper& sw)
 {
   // The size is the same for every state of the machine, so this is one fixed block.
-  const size_t size = psemu_state_size(m_ps);
+  const size_t size = m_state_size;
 
   if (sw.IsReading())
   {

@@ -59,12 +59,13 @@ public:
   // happen with no console write at all, and there is no write path here to hang a dirty flag on.
   bool SaveFlash(MemoryCardImage::DataArray* data) const;
 
-  // Size of the machine state in bytes. The core keeps this constant for a given build, so it can
-  // be measured before the machine is serialized.
-  size_t GetStateSize() const;
+  // Size of the machine state in bytes. Measuring it walks every field of the machine, and the core
+  // keeps it constant for a given build, so it is measured once at construction instead.
+  size_t GetStateSize() const { return m_state_size; }
 
   bool DoState(StateWrapper& sw);
 
 private:
   psemu* m_ps = nullptr;
+  size_t m_state_size = 0;
 };
