@@ -105,7 +105,7 @@ bool MemoryCard::DoState(StateWrapper& sw)
   // what keeps a configuration mismatch a message to the user instead of a desynchronized stream.
   u32 device_state_size =
     (sw.IsWriting() && m_pocketstation) ? static_cast<u32>(m_pocketstation->GetStateSize()) : 0;
-  if (sw.GetVersion() >= 85)
+  if (sw.GetVersion() >= 86)
     sw.Do(&device_state_size);
 
   if (device_state_size > 0)
