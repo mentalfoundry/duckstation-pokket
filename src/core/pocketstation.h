@@ -68,8 +68,8 @@ public:
   // happen with no console write at all, and there is no write path here to hang a dirty flag on.
   bool SaveFlash(MemoryCardImage::DataArray* data) const;
 
-  // Size of the machine state in bytes. Constant for a given build: the core holds it fixed so that
-  // its libretro frontend can measure once and write later.
+  // Size of the machine state in bytes. The core keeps this constant for a given build, so it can
+  // be measured before the machine is serialized.
   size_t GetStateSize() const;
 
   bool DoState(StateWrapper& sw);

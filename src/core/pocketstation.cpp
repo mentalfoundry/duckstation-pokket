@@ -138,8 +138,7 @@ size_t PocketStation::GetStateSize() const
 
 bool PocketStation::DoState(StateWrapper& sw)
 {
-  // The size is the same for every state of the machine, by design in the core: its libretro
-  // frontend measures once and writes later. So this can be serialized as one fixed block.
+  // The size is the same for every state of the machine, so this is one fixed block.
   const size_t size = psemu_state_size(m_ps);
 
   if (sw.IsReading())
