@@ -396,6 +396,11 @@ struct Settings : public GPUSettings
   // above, which selects where the card image is stored: the two are independent, so a PocketStation
   // can use per-game storage in the same way a card can.
   std::array<bool, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation{};
+
+  // Serial of the device in each slot, as 8 hex digits. An app can read it and derive save content
+  // from it, so it belongs to the device rather than being one global value.
+  std::array<std::string, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation_id{};
+
   std::string pocketstation_bios_path;
 
   MultitapMode multitap_mode = DEFAULT_MULTITAP_MODE;

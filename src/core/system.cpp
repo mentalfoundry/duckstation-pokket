@@ -3856,7 +3856,8 @@ void System::AttachPocketStationToCard(u32 slot, MemoryCard* card)
   Error error;
   const std::optional<DynamicHeapArray<u8>> bios =
     FileSystem::ReadBinaryFile(g_settings.pocketstation_bios_path.c_str(), &error);
-  if (!bios.has_value() || !card->AttachPocketStation(bios->cspan(), &error))
+  if (!bios.has_value() ||
+      !card->AttachPocketStation(bios->cspan(), g_settings.memory_card_pocketstation_id[slot], &error))
   {
     Host::AddIconOSDMessage(OSDMessageType::Error, fmt::format("PocketStation{}", slot), ICON_PF_MEMORY_CARD,
                             fmt::format(TRANSLATE_FS("System", "Memory Card Slot {}"), slot + 1),

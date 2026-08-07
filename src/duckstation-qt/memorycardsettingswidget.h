@@ -46,6 +46,8 @@ private:
     QPushButton* memory_card_path_browse;
     QPushButton* memory_card_path_reset;
     QCheckBox* pocketstation;
+    QLabel* pocketstation_id_label;
+    QLineEdit* pocketstation_id;
   };
 
   void createUi();

@@ -4,6 +4,7 @@
 #include "memorycardsettingswidget.h"
 
 #include "core/controller.h"
+#include "core/pocketstation.h"
 #include "core/settings.h"
 #include "inputbindingwidgets.h"
 #include "mainwindow.h"
@@ -17,7 +18,9 @@
 
 #include "fmt/format.h"
 
+#include <QtCore/QRegularExpression>
 #include <QtCore/QUrl>
+#include <QtGui/QRegularExpressionValidator>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QFileDialog>
@@ -68,7 +71,9 @@ void MemoryCardSettingsWidget::createUi()
 
   m_port_tabs = new QTabWidget(this);
   m_port_tabs->setDocumentMode(true);
-  layout->addWidget(m_port_tabs);
+  // Stretch of 1: the tabs take the space left over, so their contents are not clipped by the
+  // groups below them.
+  layout->addWidget(m_port_tabs, 1);
   createPortSettings(m_dialog->getEffectiveMultitapMode());
 
   createPocketStationUi(this, layout);
@@ -315,13 +320,38 @@ void MemoryCardSettingsWidget::createPortSettingsUi(u32 index, PortSettingsUI* u
   ui->layout->addWidget(ui->memory_card_path_label);
   ui->layout->addLayout(memory_card_layout);
 
+  // One row: the device and its serial belong together, and the tab has little vertical room.
+  QHBoxLayout* const pocketstation_layout = new QHBoxLayout();
+
   ui->pocketstation = new QCheckBox(tr("Use PocketStation"), ui->container);
   SettingWidgetBinder::BindWidgetToBoolSetting(m_dialog->getSettingsInterface(), ui->pocketstation, "MemoryCards",
                                                fmt::format("Card{}PocketStation", index + 1), false);
-  ui->layout->addWidget(ui->pocketstation);
+  pocketstation_layout->addWidget(ui->pocketstation);
   m_dialog->registerWidgetHelp(ui->pocketstation, tr("Use PocketStation"), tr("Unchecked"),
                                tr("Puts a PocketStation in this slot instead of an ordinary memory card. Needs the "
                                   "BIOS image set below."));
+
+  ui->pocketstation_id_label = new QLabel(tr("Device ID:"), ui->container);
+  pocketstation_layout->addWidget(ui->pocketstation_id_label);
+
+  ui->pocketstation_id = new QLineEdit(ui->container);
+  ui->pocketstation_id->setMaxLength(8);
+  ui->pocketstation_id->setValidator(
+    new QRegularExpressionValidator(QRegularExpression(u"[0-9A-Fa-f]{0,8}"_s), ui->pocketstation_id));
+  ui->pocketstation_id->setPlaceholderText(QString::fromStdString(PocketStation::GetDefaultHardwareId()));
+  SettingWidgetBinder::BindWidgetToStringSetting(m_dialog->getSettingsInterface(), ui->pocketstation_id, "MemoryCards",
+                                                 fmt::format("Card{}PocketStationID", index + 1));
+  pocketstation_layout->addWidget(ui->pocketstation_id);
+  m_dialog->registerWidgetHelp(ui->pocketstation_id, tr("Device ID"), tr("410000D3"),
+                               tr("Serial of the device, as 8 hex digits. An app can read this and derive save content "
+                                  "from it, so each slot has its own."));
+
+  ui->layout->addLayout(pocketstation_layout);
+
+  connect(ui->pocketstation, &QCheckBox::toggled, ui->pocketstation_id_label, &QWidget::setEnabled);
+  connect(ui->pocketstation, &QCheckBox::toggled, ui->pocketstation_id, &QWidget::setEnabled);
+  ui->pocketstation_id_label->setEnabled(ui->pocketstation->isChecked());
+  ui->pocketstation_id->setEnabled(ui->pocketstation->isChecked());
 
   onMemoryCardTypeChanged(index);
 }
