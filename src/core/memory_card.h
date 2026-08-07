@@ -14,6 +14,8 @@
 #include <string>
 #include <string_view>
 
+class PocketStation;
+
 class MemoryCard final
 {
 public:
@@ -112,4 +114,12 @@ private:
   u32 m_index;
 
   MemoryCardImage::DataArray m_data{};
+
+  // Set when this slot holds a PocketStation instead of an ordinary card.
+  //
+  // When it is set, the state machine above is not used at all. The device answers every command
+  // itself, including the three standard ones, because its BIOS owns the protocol. m_data is then a
+  // copy of the device's flash, refreshed at each command boundary: the device writes its own flash
+  // while an app runs, so the contents can change with no console write to observe.
+  std::unique_ptr<PocketStation> m_pocketstation;
 };

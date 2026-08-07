@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: CC-BY-NC-ND-4.0
 
 #include "memory_card.h"
+#include "pocketstation.h"
 #include "system_private.h"
 
 #include "util/imgui_manager.h"
@@ -101,6 +102,22 @@ void MemoryCard::CopyState(const MemoryCard* src)
 
 void MemoryCard::ResetTransferState()
 {
+  if (m_pocketstation)
+  {
+    // The device learns that a command ended from the release of the select line, and it waits for
+    // that release after the last byte. Without it, it answers one command and then answers nothing.
+    m_pocketstation->ResetTransferState();
+
+    // A command can have changed the flash, and the device also writes its own flash while an app
+    // runs. Neither shows up as a write through the state machine below, so the contents are
+    // compared rather than tracked.
+    if (m_pocketstation->SaveFlash(&m_data))
+    {
+      m_changed = true;
+      QueueFileSave();
+    }
+  }
+
   m_state = State::Idle;
   m_address = 0;
   m_sector_offset = 0;
@@ -110,6 +127,12 @@ void MemoryCard::ResetTransferState()
 
 bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
 {
+  // A PocketStation answers every command itself, including the three standard ones. Its BIOS owns
+  // the protocol, and commands 5Bh/5Ch dispatch into the app file, so none of it can be answered
+  // from here.
+  if (m_pocketstation)
+    return m_pocketstation->Transfer(data_in, data_out);
+
   bool ack = false;
 #if defined(_DEBUG) || defined(_DEVEL)
   const State old_state = m_state;
