@@ -4351,6 +4351,81 @@ void FullscreenUI::DrawMemoryCardSettingsPage()
                          SetSettingsChanged(bsi);
                        });
     }
+
+    skey.format("Card{}PocketStation", i + 1);
+    DrawToggleSetting(bsi, FSUI_ICONVSTR(ICON_FA_MICROCHIP, "Use PocketStation"),
+                      FSUI_VSTR("Puts a PocketStation in this slot instead of an ordinary memory card. Needs the "
+                                "PocketStation BIOS image to be set."),
+                      "MemoryCards", skey.c_str(), false);
+    const bool pocketstation_enabled = GetEffectiveBoolSetting(bsi, "MemoryCards", skey.c_str(), false);
+
+    skey.format("Card{}PocketStationID", i + 1);
+    const TinyString pocketstation_id = GetEffectiveTinyStringSetting(bsi, "MemoryCards", skey.c_str(), "410000D3");
+
+    TinyString id_title;
+    id_title.format("{}##pocketstation_id_{}", FSUI_ICONVSTR(ICON_FA_MICROCHIP, "Device ID"), i);
+    if (MenuActionButton(id_title,
+                         FSUI_VSTR("Serial of the device, as 8 hex digits. An app can read this and derive save "
+                                   "content from it, so each slot has its own."),
+                         pocketstation_id.view(), pocketstation_enabled))
+    {
+      // skey is reused by the next slot, so the callback gets its own copy of the key.
+      OpenInputStringDialog(id_title, FSUI_STR("Enter the device ID, as 8 hex digits."), FSUI_STR("Device ID:"),
+                            FSUI_ICONSTR(ICON_FA_CHECK, "Save"), std::string(pocketstation_id.view()),
+                            [game_settings = IsEditingGameSettings(bsi),
+                             key = std::string(skey.view())](std::string new_id) {
+                              const auto lock = Core::GetSettingsLock();
+                              SettingsInterface* bsi = GetEditingSettingsInterface(game_settings);
+                              if (new_id.empty())
+                                bsi->DeleteValue("MemoryCards", key.c_str());
+                              else
+                                bsi->SetStringValue("MemoryCards", key.c_str(), new_id.c_str());
+                              SetSettingsChanged(bsi);
+                            });
+    }
+  }
+
+  MenuHeading(FSUI_VSTR("PocketStation"));
+
+  {
+    const std::optional<SmallString> bios_value(
+      bsi->GetOptionalSmallStringValue("MemoryCards", "PocketStationBiosPath", std::nullopt));
+
+    TinyString title;
+    title.assign(FSUI_ICONVSTR(ICON_FA_FILE, "BIOS Image"));
+    if (MenuActionButton(title,
+                         FSUI_VSTR("The BIOS image of the PocketStation. The device answers each memory card command "
+                                   "from this image, so a slot cannot hold one without it."),
+                         bios_value.has_value() ? bios_value->view() : FSUI_VSTR("Unset")))
+    {
+      ChoiceDialogOptions options;
+      if (bios_value.has_value() && !bios_value->empty())
+        options.emplace_back(fmt::format("{} (Current)", bios_value.value()), true);
+
+      // The BIOS directory is where a user already keeps console images, so it is where they will
+      // have put this one.
+      FileSystem::FindResultsArray results;
+      FileSystem::FindFiles(EmuFolders::Bios.c_str(), "*",
+                            FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RELATIVE_PATHS,
+                            &results);
+      for (FILESYSTEM_FIND_DATA& ffd : results)
+      {
+        const bool selected = (bios_value.has_value() && bios_value.value() == ffd.FileName);
+        options.emplace_back(std::move(ffd.FileName), selected);
+      }
+
+      OpenChoiceDialog(title, false, std::move(options),
+                       [game_settings = IsEditingGameSettings(bsi)](s32 index, const std::string& title, bool checked) {
+                         if (index < 0)
+                           return;
+
+                         const auto lock = Core::GetSettingsLock();
+                         SettingsInterface* bsi = GetEditingSettingsInterface(game_settings);
+                         bsi->SetStringValue("MemoryCards", "PocketStationBiosPath",
+                                             Path::Combine(EmuFolders::Bios, title).c_str());
+                         SetSettingsChanged(bsi);
+                       });
+    }
   }
 
   MenuHeading(FSUI_VSTR("Save Locations"));
