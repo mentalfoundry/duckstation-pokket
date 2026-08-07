@@ -131,6 +131,11 @@ bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data) const
   return true;
 }
 
+size_t PocketStation::GetStateSize() const
+{
+  return psemu_state_size(m_ps);
+}
+
 bool PocketStation::DoState(StateWrapper& sw)
 {
   // The size is the same for every state of the machine, by design in the core: its libretro

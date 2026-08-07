@@ -64,6 +64,12 @@ void MemoryCard::Reset()
   m_FLAG.no_write_yet = true;
 }
 
+u32 MemoryCard::GetStateSize() const
+{
+  return STATE_HEADER_SIZE + (m_pocketstation ? static_cast<u32>(m_pocketstation->GetStateSize()) :
+                                                static_cast<u32>(MemoryCardImage::DATA_SIZE));
+}
+
 bool MemoryCard::DoState(StateWrapper& sw)
 {
   if (sw.IsReading())
@@ -75,7 +81,60 @@ bool MemoryCard::DoState(StateWrapper& sw)
   sw.Do(&m_sector_offset);
   sw.Do(&m_checksum);
   sw.Do(&m_last_byte);
-  sw.Do(&m_data);
+
+  // A PocketStation writes its machine state here instead of the raw image, because the flash of the
+  // device is the card image and writing both would store the same 128KB twice.
+  //
+  // The length travels with it. A state written with a device in this slot has to stay readable by a
+  // session without one, so the reader can always consume exactly what the writer produced. That is
+  // what keeps a configuration mismatch a message to the user instead of a desynchronized stream.
+  u32 device_state_size =
+    (sw.IsWriting() && m_pocketstation) ? static_cast<u32>(m_pocketstation->GetStateSize()) : 0;
+  if (sw.GetVersion() >= 85)
+    sw.Do(&device_state_size);
+
+  if (device_state_size > 0)
+  {
+    if (m_pocketstation)
+    {
+      if (!m_pocketstation->DoState(sw))
+        return false;
+
+      // The image lives inside the machine state, so recover it rather than serializing it twice.
+      if (sw.IsReading())
+        m_pocketstation->SaveFlash(&m_data);
+    }
+    else
+    {
+      sw.SkipBytes(device_state_size);
+
+      Host::AddIconOSDMessage(
+        OSDMessageType::Error, fmt::format("CardLoadWarning{}", m_index), ICON_EMOJI_WARNING,
+        fmt::format(TRANSLATE_FS("MemoryCard", "Save state contains a PocketStation in slot {}."), m_index + 1u),
+        TRANSLATE_STR("MemoryCard", "Leaving the memory card connected. The game may not be able to handle this."));
+      WARNING_LOG("Save state has a PocketStation in slot {}, this session does not.", m_index + 1u);
+      System::SetTaint(System::Taint::MemoryCardMismatch);
+    }
+  }
+  else
+  {
+    sw.Do(&m_data);
+
+    if (sw.IsReading() && m_pocketstation)
+    {
+      // The state holds an ordinary card and this slot holds a device. The image is still valid
+      // storage for it, so hand it over and let the device carry on from there.
+      m_pocketstation->LoadFlash(m_data);
+
+      Host::AddIconOSDMessage(
+        OSDMessageType::Error, fmt::format("CardLoadWarning{}", m_index), ICON_EMOJI_WARNING,
+        fmt::format(TRANSLATE_FS("MemoryCard", "Save state contains a memory card in slot {}."), m_index + 1u),
+        TRANSLATE_STR("MemoryCard", "Loading its data into the PocketStation. The game may not be able to handle this."));
+      WARNING_LOG("Save state has a plain card in slot {}, this session has a PocketStation.", m_index + 1u);
+      System::SetTaint(System::Taint::MemoryCardMismatch);
+    }
+  }
+
   sw.Do(&m_changed);
 
   if (sw.IsReading())

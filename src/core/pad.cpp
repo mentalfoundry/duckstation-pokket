@@ -338,8 +338,17 @@ void Pad::BackupMemoryCardState()
 {
   DEV_LOG("Backing up memory card state.");
 
-  if (s_state.memory_card_backup.empty())
-    s_state.memory_card_backup.resize(MemoryCard::STATE_SIZE * NUM_CONTROLLER_AND_CARD_PORTS);
+  // Not one size times the port count: a slot holding a PocketStation serializes the machine state
+  // of the device, which is larger than a card image. Size from what the cards actually write.
+  size_t required = 0;
+  for (u32 i = 0; i < NUM_CONTROLLER_AND_CARD_PORTS; i++)
+  {
+    if (s_state.memory_cards[i])
+      required += s_state.memory_cards[i]->GetStateSize();
+  }
+
+  if (s_state.memory_card_backup.size() < required)
+    s_state.memory_card_backup.resize(required);
 
   StateWrapper sw(s_state.memory_card_backup.span(), StateWrapper::Mode::Write, SAVE_STATE_VERSION);
   for (u32 i = 0; i < NUM_CONTROLLER_AND_CARD_PORTS; i++)
