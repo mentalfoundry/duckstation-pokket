@@ -15,20 +15,14 @@ class StateWrapper;
 
 struct psemu;
 
-// A PocketStation in a memory card slot.
+// A PocketStation in a memory card slot: a memory card with an ARM7 machine inside it.
 //
-// The PocketStation is a memory card with an ARM7 machine inside it. It answers the three standard
-// memory card commands (0x52 Read Sector, 0x53 Get ID, 0x57 Write Sector) and the PocketStation
-// commands (0x50, and 0x58 to 0x5F).
+// This class implements no memory card commands, not even the standard ones. The device's BIOS
+// answers them from an interrupt handler, and commands 5Bh/5Ch dispatch through a function table in
+// the app file, so only the emulated machine can answer those. This moves bytes and runs the
+// machine.
 //
-// THE PROTOCOL IS NOT HERE, AND IT IS NOT IN THE CORE EITHER. The BIOS of the device holds it. A
-// byte from the console raises an interrupt on the emulated ARM, and the FIQ handler of that BIOS
-// selects the reply. Commands 0x5B and 0x5C go further: they execute a function number, and the
-// numbers 0x80 to 0xFF resolve through a function table in the header of the app file. Thus no
-// protocol code outside the emulated machine can answer them, and this class implements no command.
-// It moves bytes, and it runs the machine.
-//
-// Requires a PocketStation BIOS image. Without one, nothing answers a transfer.
+// Requires a PocketStation BIOS image; without one nothing answers a transfer.
 class PocketStation
 {
 public:
@@ -48,11 +42,8 @@ public:
   bool Transfer(u8 data_in, u8* data_out);
 
   // Releases the select line at the end of a command, and runs the machine so the device can act on
-  // it.
-  //
-  // THE DEVICE NEEDS THIS. Its BIOS learns that a command ended from the release of this line, and
-  // it waits for that release after the last byte. Without the release it answers one command and
-  // then answers nothing.
+  // it. Its BIOS learns that a command ended from this release and waits for it after the last
+  // byte, so without it the device answers one command and then answers nothing.
   void ResetTransferState();
 
   // Copies the card image into the flash of the device, and back out again.

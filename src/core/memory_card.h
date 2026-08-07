@@ -25,11 +25,9 @@ public:
   // Fixed part of DoState(): the transfer state, plus the length field that precedes the payload.
   static constexpr u32 STATE_HEADER_SIZE = 1 + 1 + 2 + 1 + 1 + 1 + 4 + 1;
 
-  // Serialized size of this card, in bytes.
-  //
-  // NOT THE SAME FOR EVERY CARD. A slot holding a PocketStation writes the machine state of the
-  // device in place of the raw card image, because the flash of that device is the card image.
-  // Pad sizes its backup buffer from the sum of these, not from one value times the port count.
+  // Serialized size of this card in bytes, which is not the same for every card: a slot holding a
+  // PocketStation writes the machine state of the device in place of the raw image, since the flash
+  // of that device is the image. Pad sizes its backup buffer from the sum of these.
   u32 GetStateSize() const;
 
   static std::unique_ptr<MemoryCard> Create(u32 index);
