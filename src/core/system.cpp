@@ -3835,8 +3835,37 @@ void System::UpdateMemoryCards()
     else
       card = MemoryCard::Create(i);
 
+    if (card && g_settings.memory_card_pocketstation[i])
+      AttachPocketStationToCard(i, card.get());
+
     Pad::SetMemoryCard(i, std::move(card));
   }
+}
+
+void System::AttachPocketStationToCard(u32 slot, MemoryCard* card)
+{
+  if (g_settings.pocketstation_bios_path.empty())
+  {
+    Host::AddIconOSDMessage(
+      OSDMessageType::Error, fmt::format("PocketStation{}", slot), ICON_PF_MEMORY_CARD,
+      fmt::format(TRANSLATE_FS("System", "Memory Card Slot {}"), slot + 1),
+      TRANSLATE_STR("System", "PocketStation is enabled, but no BIOS image is set. Using an ordinary card."));
+    return;
+  }
+
+  Error error;
+  const std::optional<DynamicHeapArray<u8>> bios =
+    FileSystem::ReadBinaryFile(g_settings.pocketstation_bios_path.c_str(), &error);
+  if (!bios.has_value() || !card->AttachPocketStation(bios->cspan(), &error))
+  {
+    Host::AddIconOSDMessage(OSDMessageType::Error, fmt::format("PocketStation{}", slot), ICON_PF_MEMORY_CARD,
+                            fmt::format(TRANSLATE_FS("System", "Memory Card Slot {}"), slot + 1),
+                            fmt::format(TRANSLATE_FS("System", "Failed to start PocketStation: {}"),
+                                        error.GetDescription()));
+    return;
+  }
+
+  INFO_LOG("Memory Card {}: PocketStation started from {}", slot + 1, g_settings.pocketstation_bios_path);
 }
 
 bool System::HasMemoryCard(u32 slot)

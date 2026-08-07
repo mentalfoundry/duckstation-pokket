@@ -177,6 +177,7 @@ std::span<const char* const> Settings::GetSectionSaveOrder()
     "CDROM",
     "Audio",
     "MemoryCards",
+    "PocketStation",
     "TextureReplacements",
     "MediaCapture",
     "InternalPostProcessing",
@@ -526,6 +527,14 @@ void Settings::Load(const SettingsInterface& si, const SettingsInterface& contro
   memory_card_use_playlist_title = si.GetBoolValue("MemoryCards", "UsePlaylistTitle", true);
   memory_card_fast_forward_access = si.GetBoolValue("MemoryCards", "FastForwardAccess", false);
 
+  // PocketStation. Kept in one section and one block so it reads as a single unit.
+  pocketstation_bios_path = si.GetStringValue("PocketStation", "BiosPath");
+  for (u32 pad = 0; pad < NUM_CONTROLLER_AND_CARD_PORTS; pad++)
+  {
+    skey.format("Card{}Enabled", pad + 1);
+    memory_card_pocketstation[pad] = si.GetBoolValue("PocketStation", skey.c_str(), false);
+  }
+
   achievements_enabled = si.GetBoolValue("Cheevos", "Enabled", false);
   achievements_hardcore_mode = si.GetBoolValue("Cheevos", "ChallengeMode", false);
   achievements_encore_mode = si.GetBoolValue("Cheevos", "EncoreMode", false);
@@ -874,6 +883,17 @@ void Settings::Save(SettingsInterface& si, bool ignore_user_prefs, bool for_copy
 
   si.SetBoolValue("MemoryCards", "UsePlaylistTitle", memory_card_use_playlist_title);
   si.SetBoolValue("MemoryCards", "FastForwardAccess", memory_card_fast_forward_access);
+
+  // PocketStation. Kept in one section and one block so it reads as a single unit.
+  if (!pocketstation_bios_path.empty())
+    si.SetStringValue("PocketStation", "BiosPath", pocketstation_bios_path.c_str());
+  else
+    si.DeleteValue("PocketStation", "BiosPath");
+  for (u32 i = 0; i < NUM_CONTROLLER_AND_CARD_PORTS; i++)
+  {
+    skey.format("Card{}Enabled", i + 1);
+    si.SetBoolValue("PocketStation", skey, memory_card_pocketstation[i]);
+  }
 
   si.SetStringValue("ControllerPorts", "MultitapMode", GetMultitapModeName(multitap_mode));
 

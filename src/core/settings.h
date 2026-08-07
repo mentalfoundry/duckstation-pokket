@@ -392,6 +392,14 @@ struct Settings : public GPUSettings
   std::array<MemoryCardType, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_types{};
   std::array<std::string, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_paths{};
 
+  // Whether each slot holds a PocketStation rather than an ordinary card. Separate from the type
+  // above, which selects where the card image is stored: the two are independent, so a PocketStation
+  // can use per-game storage in the same way a card can.
+  std::array<bool, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation{};
+
+  // BIOS image for the PocketStation. Without one, no slot can hold the device.
+  std::string pocketstation_bios_path;
+
   MultitapMode multitap_mode = DEFAULT_MULTITAP_MODE;
 
   PIODeviceType pio_device_type = DEFAULT_PIO_DEVICE_TYPE;

@@ -33,6 +33,7 @@ class Controller;
 class GPUTexture;
 class INISettingsInterface;
 class MediaCapture;
+class MemoryCard;
 enum class MediaCaptureBackend : u8;
 enum class MediaCaptureMode : u8;
 
@@ -332,6 +333,10 @@ void SetVideoFrameRate(float frequency);
 Controller* GetController(u32 slot);
 void UpdateMemoryCards();
 bool HasMemoryCard(u32 slot);
+
+/// Starts a PocketStation in the given slot, using the configured BIOS image. Reports to the user
+/// and leaves the slot an ordinary card if no image is set, or if it cannot be started.
+void AttachPocketStationToCard(u32 slot, MemoryCard* card);
 bool IsSavingMemoryCards();
 
 /// Swaps memory cards in slot 1/2.
