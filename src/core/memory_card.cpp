@@ -64,6 +64,21 @@ void MemoryCard::Reset()
   m_FLAG.no_write_yet = true;
 }
 
+bool MemoryCard::AttachPocketStation(std::span<const u8> bios, Error* error)
+{
+  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, error);
+  if (!ps)
+    return false;
+
+  // Hand it whatever this slot already holds. The flash of the device is the card storage, so the
+  // existing image is valid content for it, and the device reads its directory from there.
+  ps->LoadFlash(m_data);
+
+  m_pocketstation = std::move(ps);
+  INFO_LOG("Memory card {} is a PocketStation.", m_index + 1u);
+  return true;
+}
+
 u32 MemoryCard::GetStateSize() const
 {
   return STATE_HEADER_SIZE + (m_pocketstation ? static_cast<u32>(m_pocketstation->GetStateSize()) :

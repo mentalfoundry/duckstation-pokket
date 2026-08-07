@@ -11,9 +11,11 @@
 
 #include <array>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 
+class Error;
 class PocketStation;
 
 class MemoryCard final
@@ -36,6 +38,15 @@ public:
   const MemoryCardImage::DataArray& GetData() const { return m_data; }
   MemoryCardImage::DataArray& GetData() { return m_data; }
   const std::string& GetPath() const { return m_path; }
+
+  // Turns this slot into a PocketStation, using the supplied BIOS image. The card image this slot
+  // already holds becomes the flash of the device, since that flash is the card storage.
+  //
+  // Returns false and sets error if the image is not a valid BIOS, leaving the slot an ordinary
+  // card.
+  bool AttachPocketStation(std::span<const u8> bios, Error* error);
+
+  bool HasPocketStation() const { return static_cast<bool>(m_pocketstation); }
 
   void Reset();
   bool DoState(StateWrapper& sw);
