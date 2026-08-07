@@ -110,7 +110,12 @@ bool MemoryCard::DoState(StateWrapper& sw)
 
   if (device_state_size > 0)
   {
-    if (m_pocketstation)
+    // The length has to agree as well as the presence. A different build of the device can have a
+    // different state size, so consuming our own size against their bytes would desynchronize the
+    // stream rather than fail.
+    const bool consumable = (m_pocketstation && device_state_size == m_pocketstation->GetStateSize());
+
+    if (consumable)
     {
       if (!m_pocketstation->DoState(sw))
         return false;
@@ -127,7 +132,8 @@ bool MemoryCard::DoState(StateWrapper& sw)
         OSDMessageType::Error, fmt::format("CardLoadWarning{}", m_index), ICON_EMOJI_WARNING,
         fmt::format(TRANSLATE_FS("MemoryCard", "Save state contains a PocketStation in slot {}."), m_index + 1u),
         TRANSLATE_STR("MemoryCard", "Leaving the memory card connected. The game may not be able to handle this."));
-      WARNING_LOG("Save state has a PocketStation in slot {}, this session does not.", m_index + 1u);
+      WARNING_LOG("Save state has a {} byte PocketStation state in slot {}, this session cannot consume it.",
+                  device_state_size, m_index + 1u);
       System::SetTaint(System::Taint::MemoryCardMismatch);
     }
   }
