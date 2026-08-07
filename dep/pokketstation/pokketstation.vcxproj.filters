@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="src\arm_exec.c" />
+    <ClCompile Include="src\clk.c" />
+    <ClCompile Include="src\com.c" />
+    <ClCompile Include="src\cpu.c" />
+    <ClCompile Include="src\dac.c" />
+    <ClCompile Include="src\flash.c" />
+    <ClCompile Include="src\intc.c" />
+    <ClCompile Include="src\iop.c" />
+    <ClCompile Include="src\ir.c" />
+    <ClCompile Include="src\lcd.c" />
+    <ClCompile Include="src\memory.c" />
+    <ClCompile Include="src\psemu.c" />
+    <ClCompile Include="src\rtc.c" />
+    <ClCompile Include="src\state.c" />
+    <ClCompile Include="src\thumb_exec.c" />
+    <ClCompile Include="src\timer.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\psemu\psemu.h" />
+    <ClInclude Include="src\clk.h" />
+    <ClInclude Include="src\com.h" />
+    <ClInclude Include="src\cpu.h" />
+    <ClInclude Include="src\dac.h" />
+    <ClInclude Include="src\flash.h" />
+    <ClInclude Include="src\intc.h" />
+    <ClInclude Include="src\iop.h" />
+    <ClInclude Include="src\ir.h" />
+    <ClInclude Include="src\lcd.h" />
+    <ClInclude Include="src\memory.h" />
+    <ClInclude Include="src\psemu_internal.h" />
+    <ClInclude Include="src\rtc.h" />
+    <ClInclude Include="src\state.h" />
+    <ClInclude Include="src\timer.h" />
+  </ItemGroup>
+</Project>
