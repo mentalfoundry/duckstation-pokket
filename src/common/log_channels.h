@@ -48,6 +48,7 @@
   X(Pad)                                                                                                               \
   X(PerfMon)                                                                                                           \
   X(PlatformMisc)                                                                                                      \
+  X(PocketStation)                                                                                                     \
   X(PostProcessing)                                                                                                    \
   X(PIO)                                                                                                               \
   X(ReShadeFXShader)                                                                                                   \

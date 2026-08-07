@@ -76,6 +76,7 @@
     <ClCompile Include="performance_counters.cpp" />
     <ClCompile Include="pio.cpp" />
     <ClCompile Include="playstation_mouse.cpp" />
+    <ClCompile Include="pocketstation.cpp" />
     <ClCompile Include="psf_loader.cpp" />
     <ClCompile Include="settings.cpp" />
     <ClCompile Include="sio.cpp" />
@@ -168,6 +169,7 @@
     <ClInclude Include="performance_counters.h" />
     <ClInclude Include="pio.h" />
     <ClInclude Include="playstation_mouse.h" />
+    <ClInclude Include="pocketstation.h" />
     <ClInclude Include="psf_loader.h" />
     <ClInclude Include="save_state_version.h" />
     <ClInclude Include="settings.h" />
@@ -185,6 +187,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\dep\imgui\imgui.vcxproj">
       <Project>{bb08260f-6fbc-46af-8924-090ee71360c6}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\dep\pokketstation\pokketstation.vcxproj">
+      <Project>{c910f44e-0b8a-4e5f-9b0b-7c78fcbe2e64}</Project>
     </ProjectReference>
     <ProjectReference Include="..\..\dep\rapidyaml\rapidyaml.vcxproj">
       <Project>{1ad23a8a-4c20-434c-ae6b-0e07759eeb1e}</Project>
@@ -219,7 +224,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <PreprocessorDefinitions Condition="'$(Platform)'=='x64' And ($(Configuration.Contains('Debug')) Or $(Configuration.Contains('Devel')))">ZYDIS_DISABLE_ENCODER;ZYDIS_DISABLE_AVX512;ZYDIS_DISABLE_KNC;ZYDIS_STATIC_BUILD;ZYCORE_STATIC_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)dep\fast_float\include;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories);$(SolutionDir)dep\fast_float\include;$(SolutionDir)dep\pokketstation\include;</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Platform)'=='x64' And ($(Configuration.Contains('Debug')) Or $(Configuration.Contains('Devel')))">%(AdditionalIncludeDirectories);$(SolutionDir)dep\zydis\include;$(SolutionDir)dep\zydis\dependencies\zycore\include</AdditionalIncludeDirectories>
       <ObjectFileName>$(IntDir)/%(RelativeDir)/</ObjectFileName>
       <PrecompiledHeader>Use</PrecompiledHeader>
