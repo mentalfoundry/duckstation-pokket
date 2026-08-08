@@ -44,7 +44,7 @@ public:
   //
   // Returns false and sets error if the image is not a valid BIOS, leaving the slot an ordinary
   // card.
-  bool AttachPocketStation(std::span<const u8> bios, std::string_view hardware_id, Error* error);
+  bool AttachPocketStation(std::span<const u8> bios, Error* error);
 
   bool HasPocketStation() const { return static_cast<bool>(m_pocketstation); }
 

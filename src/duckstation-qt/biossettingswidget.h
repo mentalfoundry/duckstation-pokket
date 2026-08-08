@@ -27,6 +27,8 @@ public:
                                         std::vector<std::pair<std::string, const BIOS::ImageInfo*>>& images,
                                         bool per_game);
   static void setDropDownValue(QComboBox* cb, const std::optional<std::string>& name, bool per_game);
+  static void populatePocketStationDropDown(QComboBox* cb, const std::vector<std::pair<std::string, bool>>& images,
+                                            bool per_game);
 
 private:
   void refreshList();

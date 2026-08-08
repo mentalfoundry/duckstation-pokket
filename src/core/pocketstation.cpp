@@ -45,20 +45,7 @@ PocketStation::~PocketStation()
     psemu_destroy(m_ps);
 }
 
-std::string PocketStation::FormatHardwareId(u32 id)
-{
-  char buf[PSEMU_HARDWARE_ID_STRING_SIZE];
-  psemu_format_hardware_id(id, buf, sizeof(buf));
-  return std::string(buf);
-}
-
-std::string PocketStation::GetDefaultHardwareId(u32 slot)
-{
-  return FormatHardwareId(slot + 1);
-}
-
-std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, std::string_view hardware_id,
-                                                     Error* error)
+std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, u32 slot, Error* error)
 {
   std::unique_ptr<PocketStation> ret(new PocketStation());
 
@@ -80,19 +67,7 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, s
 
   // Before the machine runs: an app reads the serial when it makes a new save, so changing it after
   // boot would not be seen consistently.
-  static constexpr u32 FALLBACK_HARDWARE_ID = 1;
-
-  u32 id = FALLBACK_HARDWARE_ID;
-  if (!hardware_id.empty())
-  {
-    const std::string id_str(hardware_id);
-    if (!psemu_parse_hardware_id(id_str.c_str(), &id))
-    {
-      WARNING_LOG("Cannot parse PocketStation hardware ID '{}', using {:08X}.", hardware_id, FALLBACK_HARDWARE_ID);
-      id = FALLBACK_HARDWARE_ID;
-    }
-  }
-  psemu_set_hardware_id(ret->m_ps, id);
+  psemu_set_hardware_id(ret->m_ps, slot + 1);
 
   for (u32 i = 0; i < BOOT_FRAMES; i++)
     psemu_run(ret->m_ps, FRAME_CYCLES);

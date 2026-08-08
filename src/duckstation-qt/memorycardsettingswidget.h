@@ -46,21 +46,15 @@ private:
     QPushButton* memory_card_path_browse;
     QPushButton* memory_card_path_reset;
     QCheckBox* pocketstation;
-    QLabel* pocketstation_id_label;
-    QLineEdit* pocketstation_id;
   };
 
   void createUi();
-  void createPocketStationUi(QWidget* parent, QVBoxLayout* layout);
   void createPortSettingsUi(u32 index, PortSettingsUI* ui);
-  void onBrowsePocketStationBiosClicked();
   void onMemoryCardTypeChanged(u32 index);
   void onBrowseMemoryCardPathClicked(u32 index);
   void onResetMemoryCardPathClicked(u32 index);
   void onMemoryCardPathChanged(u32 index);
   void updateMemoryCardPath(u32 index);
-
-  QLineEdit* m_pocketstation_bios_path = nullptr;
 
   std::array<PortSettingsUI, NUM_CONTROLLER_AND_CARD_PORTS> m_port_ui = {};
 };

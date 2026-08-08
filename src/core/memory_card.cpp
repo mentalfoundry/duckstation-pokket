@@ -64,9 +64,9 @@ void MemoryCard::Reset()
   m_FLAG.no_write_yet = true;
 }
 
-bool MemoryCard::AttachPocketStation(std::span<const u8> bios, std::string_view hardware_id, Error* error)
+bool MemoryCard::AttachPocketStation(std::span<const u8> bios, Error* error)
 {
-  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, hardware_id, error);
+  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_index, error);
   if (!ps)
     return false;
 

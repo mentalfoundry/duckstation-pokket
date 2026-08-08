@@ -9,8 +9,6 @@
 
 #include <memory>
 #include <span>
-#include <string>
-#include <string_view>
 
 class Error;
 class StateWrapper;
@@ -32,16 +30,9 @@ public:
   // Boots a machine with the supplied BIOS, and docks it. Returns nullptr and sets error if the
   // image is not a valid BIOS, or if the machine does not enable communication after docking.
   //
-  // hardware_id is the serial of the device, as 8 hex digits. An empty or unparseable value falls
-  // back to a default.
-  static std::unique_ptr<PocketStation> Create(std::span<const u8> bios, std::string_view hardware_id, Error* error);
-
-  // Canonical 8-hex-digit form of a hardware ID.
-  static std::string FormatHardwareId(u32 id);
-
-  // Default serial for a slot. Each slot gets a different one, since two devices do not share a
-  // serial.
-  static std::string GetDefaultHardwareId(u32 slot);
+  // slot is the memory card slot the device sits in. It picks the serial of the device, since two
+  // devices do not share one.
+  static std::unique_ptr<PocketStation> Create(std::span<const u8> bios, u32 slot, Error* error);
 
   // Exchanges one byte with the console. Returns true when the device acknowledges.
   //

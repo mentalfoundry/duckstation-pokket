@@ -23,7 +23,8 @@ enum : u32
   BIOS_BASE = 0x1FC00000,
   BIOS_SIZE = 0x80000,
   BIOS_SIZE_PS2 = 0x400000,
-  BIOS_SIZE_PS3 = 0x3E66F0
+  BIOS_SIZE_PS3 = 0x3E66F0,
+  POCKETSTATION_BIOS_SIZE = 0x4000
 };
 
 struct ImageInfo
@@ -104,6 +105,10 @@ std::optional<Image> FindBIOSImageInDirectory(ConsoleRegion region, const char* 
 
 /// Returns a list of filenames and descriptions for BIOS images in a directory.
 std::vector<std::pair<std::string, const BIOS::ImageInfo*>> FindBIOSImagesInDirectory(const char* directory);
+
+/// Returns a list of filenames for PocketStation BIOS images in a directory, paired with whether the image is the
+/// known-good dump. These are separate from the console images above: one would not be a valid console BIOS.
+std::vector<std::pair<std::string, bool>> FindPocketStationBIOSImagesInDirectory(const char* directory);
 
 /// Returns true if any BIOS images are found in the configured BIOS directory.
 bool HasAnyBIOSImages();

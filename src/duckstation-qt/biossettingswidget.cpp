@@ -77,6 +77,18 @@ BIOSSettingsWidget::BIOSSettingsWidget(SettingsWindow* dialog, QWidget* parent) 
     }
   });
 
+  connect(m_ui.imagePocketStation, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int index) {
+    if (m_dialog->isPerGameSettings() && index == 0)
+    {
+      m_dialog->removeSettingValue("MemoryCards", "PocketStationBiosPath");
+    }
+    else
+    {
+      m_dialog->setStringSettingValue("MemoryCards", "PocketStationBiosPath",
+                                      m_ui.imagePocketStation->itemData(index).toString().toStdString().c_str());
+    }
+  });
+
   connect(m_ui.install, &QPushButton::clicked, this, [this]() {
     if (installBIOS(this))
       refreshList();
@@ -125,6 +137,10 @@ BIOSSettingsWidget::BIOSSettingsWidget(SettingsWindow* dialog, QWidget* parent) 
        "overwrite your cartridge dump,</strong> you should ensure you have a backup first."));
   dialog->registerWidgetHelp(m_ui.enableTTYLogging, tr("Enable TTY Logging"), tr("Unchecked"),
                              tr("Logs BIOS calls to printf(). Not all games contain debugging messages."));
+  dialog->registerWidgetHelp(m_ui.imagePocketStation, tr("PocketStation"), tr("Auto-Detect"),
+                             tr("The BIOS image of the PocketStation, from the BIOS directory. The device answers each "
+                                "memory card command from this image, so a slot cannot hold one without it. Put a "
+                                "PocketStation in a slot on the Memory Cards page."));
 }
 
 BIOSSettingsWidget::~BIOSSettingsWidget() = default;
@@ -193,6 +209,33 @@ void BIOSSettingsWidget::refreshList()
                    m_dialog->isPerGameSettings());
   setDropDownValue(m_ui.imagePAL, m_dialog->getStringValue("BIOS", "PathPAL", std::nullopt),
                    m_dialog->isPerGameSettings());
+
+  populatePocketStationDropDown(m_ui.imagePocketStation,
+                                BIOS::FindPocketStationBIOSImagesInDirectory(EmuFolders::Bios.c_str()),
+                                m_dialog->isPerGameSettings());
+  setDropDownValue(m_ui.imagePocketStation, m_dialog->getStringValue("MemoryCards", "PocketStationBiosPath",
+                                                                     std::nullopt),
+                   m_dialog->isPerGameSettings());
+}
+
+void BIOSSettingsWidget::populatePocketStationDropDown(QComboBox* cb,
+                                                       const std::vector<std::pair<std::string, bool>>& images,
+                                                       bool per_game)
+{
+  QSignalBlocker sb(cb);
+  cb->clear();
+
+  if (per_game)
+    cb->addItem(QIcon(u":/icons/system-search.png"_s), tr("Use Global Setting"));
+
+  cb->addItem(QIcon(u":/icons/system-search.png"_s), tr("Auto-Detect"));
+
+  for (const auto& [name, known] : images)
+  {
+    QString name_str(QString::fromStdString(name));
+    cb->addItem(QStringLiteral("%1 (%2)").arg(known ? tr("PocketStation BIOS") : tr("Unknown")).arg(name_str),
+                QVariant(name_str));
+  }
 }
 
 void BIOSSettingsWidget::populateDropDownForRegion(ConsoleRegion region, QComboBox* cb,
@@ -278,3 +321,4 @@ void BIOSSettingsWidget::onPIOImagePathBrowseClicked()
 
   m_ui.pioImagePath->setText(path);
 }
+

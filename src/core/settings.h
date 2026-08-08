@@ -398,7 +398,6 @@ struct Settings : public GPUSettings
   std::array<bool, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation{};
 
   // Serial of the device in each slot, as 8 hex digits. Empty uses a per-slot default.
-  std::array<std::string, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation_id{};
 
   std::string pocketstation_bios_path;
 

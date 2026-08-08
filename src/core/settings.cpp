@@ -523,8 +523,6 @@ void Settings::Load(const SettingsInterface& si, const SettingsInterface& contro
     memory_card_paths[pad] = si.GetStringViewValue("MemoryCards", skey.c_str());
     skey.format("Card{}PocketStation", pad + 1);
     memory_card_pocketstation[pad] = si.GetBoolValue("MemoryCards", skey.c_str(), false);
-    skey.format("Card{}PocketStationID", pad + 1);
-    memory_card_pocketstation_id[pad] = si.GetStringValue("MemoryCards", skey.c_str());
   }
 
   memory_card_use_playlist_title = si.GetBoolValue("MemoryCards", "UsePlaylistTitle", true);
@@ -877,11 +875,6 @@ void Settings::Save(SettingsInterface& si, bool ignore_user_prefs, bool for_copy
       si.DeleteValue("MemoryCards", skey);
     skey.format("Card{}PocketStation", i + 1);
     si.SetBoolValue("MemoryCards", skey, memory_card_pocketstation[i]);
-    skey.format("Card{}PocketStationID", i + 1);
-    if (!memory_card_pocketstation_id[i].empty())
-      si.SetStringValue("MemoryCards", skey, memory_card_pocketstation_id[i].c_str());
-    else
-      si.DeleteValue("MemoryCards", skey);
   }
 
   si.SetBoolValue("MemoryCards", "UsePlaylistTitle", memory_card_use_playlist_title);
