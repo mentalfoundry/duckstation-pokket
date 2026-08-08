@@ -238,7 +238,19 @@ void MemoryCardSettingsWidget::createPortSettingsUi(u32 index, PortSettingsUI* u
                                                &Settings::GetMemoryCardTypeName, default_value);
   connect(ui->memory_card_type, &QComboBox::currentIndexChanged, this,
           [this, index]() { onMemoryCardTypeChanged(index); });
-  ui->layout->addWidget(new QLabel(tr("Memory Card Type:"), ui->container));
+  // The checkbox shares the row with the label, which leaves the height of the tab unchanged. The
+  // tab is inside a QTabWidget, and that widget asks for the height of its page, so a row added here
+  // raises the smallest size of the whole settings window.
+  QHBoxLayout* const type_layout = new QHBoxLayout();
+  type_layout->addWidget(new QLabel(tr("Memory Card Type:"), ui->container));
+  type_layout->addStretch(1);
+
+  ui->pocketstation = new QCheckBox(tr("Use PocketStation"), ui->container);
+  SettingWidgetBinder::BindWidgetToBoolSetting(m_dialog->getSettingsInterface(), ui->pocketstation, "MemoryCards",
+                                               fmt::format("Card{}PocketStation", index + 1), false);
+  type_layout->addWidget(ui->pocketstation);
+
+  ui->layout->addLayout(type_layout);
   ui->layout->addWidget(ui->memory_card_type);
 
   QHBoxLayout* memory_card_layout = new QHBoxLayout();
@@ -269,14 +281,6 @@ void MemoryCardSettingsWidget::createPortSettingsUi(u32 index, PortSettingsUI* u
   ui->memory_card_path_label = new QLabel(tr("Shared Memory Card Path:"), ui->container);
   ui->layout->addWidget(ui->memory_card_path_label);
   ui->layout->addLayout(memory_card_layout);
-
-  ui->pocketstation = new QCheckBox(tr("Use PocketStation"), ui->container);
-  SettingWidgetBinder::BindWidgetToBoolSetting(m_dialog->getSettingsInterface(), ui->pocketstation, "MemoryCards",
-                                               fmt::format("Card{}PocketStation", index + 1), false);
-  ui->layout->addWidget(ui->pocketstation);
-  m_dialog->registerWidgetHelp(ui->pocketstation, tr("Use PocketStation"), tr("Unchecked"),
-                               tr("Puts a PocketStation in this slot instead of an ordinary memory card. Needs the "
-                                  "BIOS image set below."));
 
   onMemoryCardTypeChanged(index);
 }
