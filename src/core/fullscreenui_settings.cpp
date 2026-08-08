@@ -4401,19 +4401,20 @@ void FullscreenUI::DrawMemoryCardSettingsPage()
                                    "from this image, so a slot cannot hold one without it."),
                          bios_value.has_value() ? bios_value->view() : FSUI_VSTR("Unset")))
     {
+      // Every option is a bare file name from the BIOS directory, so the callback can always join it
+      // to that directory. An entry for the current value would break that: its text would be a
+      // whole path, and joining it to the directory again gives nonsense.
       ChoiceDialogOptions options;
-      if (bios_value.has_value() && !bios_value->empty())
-        options.emplace_back(fmt::format("{} (Current)", bios_value.value()), true);
-
-      // The BIOS directory is where a user already keeps console images, so it is where they will
-      // have put this one.
       FileSystem::FindResultsArray results;
       FileSystem::FindFiles(EmuFolders::Bios.c_str(), "*",
                             FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RELATIVE_PATHS,
                             &results);
+
+      const std::string_view current_name =
+        bios_value.has_value() ? Path::GetFileName(bios_value->view()) : std::string_view();
       for (FILESYSTEM_FIND_DATA& ffd : results)
       {
-        const bool selected = (bios_value.has_value() && bios_value.value() == ffd.FileName);
+        const bool selected = (!current_name.empty() && ffd.FileName == current_name);
         options.emplace_back(std::move(ffd.FileName), selected);
       }
 
