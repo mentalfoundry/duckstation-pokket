@@ -14,6 +14,8 @@
 
 LOG_CHANNEL(PocketStation);
 
+static_assert(PocketStation::BIOS_SIZE == PSEMU_BIOS_SIZE);
+
 namespace {
 
 // The screen of the device refreshes at approximately 32Hz, and psemu_run takes its budget in

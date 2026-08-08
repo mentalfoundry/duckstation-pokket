@@ -4401,32 +4401,32 @@ void FullscreenUI::DrawMemoryCardSettingsPage()
                                    "from this image, so a slot cannot hold one without it."),
                          bios_value.has_value() ? bios_value->view() : FSUI_VSTR("Unset")))
     {
-      // Every option is a bare file name from the BIOS directory, so the callback can always join it
-      // to that directory. An entry for the current value would break that: its text would be a
-      // whole path, and joining it to the directory again gives nonsense.
-      ChoiceDialogOptions options;
-      FileSystem::FindResultsArray results;
-      FileSystem::FindFiles(EmuFolders::Bios.c_str(), "*",
-                            FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RELATIVE_PATHS,
-                            &results);
+      // A file browser, not a list of the BIOS directory: that directory holds console images, and
+      // there is no reason for this one to be in it.
+      std::string initial_directory;
+      if (bios_value.has_value() && !bios_value->empty())
+        initial_directory = Path::GetDirectory(bios_value->view());
 
-      const std::string_view current_name =
-        bios_value.has_value() ? Path::GetFileName(bios_value->view()) : std::string_view();
-      for (FILESYSTEM_FIND_DATA& ffd : results)
-      {
-        const bool selected = (!current_name.empty() && ffd.FileName == current_name);
-        options.emplace_back(std::move(ffd.FileName), selected);
-      }
-
-      OpenChoiceDialog(title, false, std::move(options),
-                       [game_settings = IsEditingGameSettings(bsi)](s32 index, const std::string& title, bool checked) {
-                         if (index < 0)
+      OpenFileSelector(FSUI_ICONVSTR(ICON_FA_FILE, "Select PocketStation BIOS"), {"*.bin", "*.rom", "*"},
+                       std::move(initial_directory),
+                       [game_settings = IsEditingGameSettings(bsi)](const std::string& path) {
+                         if (path.empty())
                            return;
+
+                         // Reject the wrong file here, where the user is still looking at the
+                         // chooser, rather than at the next boot.
+                         if (FileSystem::GetPathFileSize(path.c_str()) != static_cast<s64>(PocketStation::BIOS_SIZE))
+                         {
+                           OpenInfoMessageDialog(
+                             ICON_EMOJI_WARNING, FSUI_STR("PocketStation BIOS"),
+                             fmt::format(FSUI_FSTR("{0} is not a PocketStation BIOS. That image is {1} bytes."),
+                                         Path::GetFileName(path), static_cast<u32>(PocketStation::BIOS_SIZE)));
+                           return;
+                         }
 
                          const auto lock = Core::GetSettingsLock();
                          SettingsInterface* bsi = GetEditingSettingsInterface(game_settings);
-                         bsi->SetStringValue("MemoryCards", "PocketStationBiosPath",
-                                             Path::Combine(EmuFolders::Bios, title).c_str());
+                         bsi->SetStringValue("MemoryCards", "PocketStationBiosPath", path.c_str());
                          SetSettingsChanged(bsi);
                        });
     }

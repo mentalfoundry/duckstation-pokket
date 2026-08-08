@@ -26,6 +26,9 @@ struct psemu;
 class PocketStation
 {
 public:
+  // Size a BIOS image has to be. Anything else is not one.
+  static constexpr u32 BIOS_SIZE = 16 * 1024;
+
   PocketStation();
   ~PocketStation();
 
