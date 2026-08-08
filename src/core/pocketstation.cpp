@@ -54,9 +54,6 @@ std::string PocketStation::FormatHardwareId(u32 id)
 
 std::string PocketStation::GetDefaultHardwareId(u32 slot)
 {
-  // A plain sequence, one per slot. An app can read the serial and derive save content from it, so
-  // picking a value for what it produces in a particular game would be a hidden change to that
-  // game rather than a default. Anyone who wants a specific serial can set one.
   return FormatHardwareId(slot + 1);
 }
 
@@ -83,8 +80,6 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, s
 
   // Before the machine runs: an app reads the serial when it makes a new save, so changing it after
   // boot would not be seen consistently.
-  // A neutral value, not the one the core defaults to: that one is picked for what it produces in a
-  // particular game, which is not something to hand out by accident.
   static constexpr u32 FALLBACK_HARDWARE_ID = 1;
 
   u32 id = FALLBACK_HARDWARE_ID;

@@ -397,8 +397,7 @@ struct Settings : public GPUSettings
   // can use per-game storage in the same way a card can.
   std::array<bool, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation{};
 
-  // Serial of the device in each slot, as 8 hex digits. An app can read it and derive save content
-  // from it, so it belongs to the device rather than being one global value.
+  // Serial of the device in each slot, as 8 hex digits. Empty uses a per-slot default.
   std::array<std::string, NUM_CONTROLLER_AND_CARD_PORTS> memory_card_pocketstation_id{};
 
   std::string pocketstation_bios_path;
