@@ -342,7 +342,8 @@ void MemoryCardSettingsWidget::createPortSettingsUi(u32 index, PortSettingsUI* u
   SettingWidgetBinder::BindWidgetToStringSetting(m_dialog->getSettingsInterface(), ui->pocketstation_id, "MemoryCards",
                                                  fmt::format("Card{}PocketStationID", index + 1));
   pocketstation_layout->addWidget(ui->pocketstation_id);
-  m_dialog->registerWidgetHelp(ui->pocketstation_id, tr("Device ID"), tr("410000D3"),
+  m_dialog->registerWidgetHelp(ui->pocketstation_id, tr("Device ID"),
+                               QString::fromStdString(PocketStation::GetDefaultHardwareId(index)),
                                tr("Serial of the device, as 8 hex digits. An app can read this and derive save content "
                                   "from it, so each slot has its own."));
 

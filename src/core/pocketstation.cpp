@@ -54,10 +54,10 @@ std::string PocketStation::FormatHardwareId(u32 id)
 
 std::string PocketStation::GetDefaultHardwareId(u32 slot)
 {
-  // A real unit carries a serial of one letter and decimal digits. Vary the letter per slot, and
-  // keep the digits: an app reads the low 24 bits of the serial and derives a save statistic from
-  // them, and the value in the core's default is the one that gives a new save the best result.
-  return FormatHardwareId((static_cast<u32>('A' + slot) << 24) | (PSEMU_DEFAULT_HARDWARE_ID & 0x00FFFFFFu));
+  // A plain sequence, one per slot. An app can read the serial and derive save content from it, so
+  // picking a value for what it produces in a particular game would be a hidden change to that
+  // game rather than a default. Anyone who wants a specific serial can set one.
+  return FormatHardwareId(slot + 1);
 }
 
 std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, std::string_view hardware_id,
@@ -83,14 +83,18 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, s
 
   // Before the machine runs: an app reads the serial when it makes a new save, so changing it after
   // boot would not be seen consistently.
-  u32 id = PSEMU_DEFAULT_HARDWARE_ID;
+  // A neutral value, not the one the core defaults to: that one is picked for what it produces in a
+  // particular game, which is not something to hand out by accident.
+  static constexpr u32 FALLBACK_HARDWARE_ID = 1;
+
+  u32 id = FALLBACK_HARDWARE_ID;
   if (!hardware_id.empty())
   {
     const std::string id_str(hardware_id);
     if (!psemu_parse_hardware_id(id_str.c_str(), &id))
     {
-      WARNING_LOG("Cannot parse PocketStation hardware ID '{}', using the default.", hardware_id);
-      id = PSEMU_DEFAULT_HARDWARE_ID;
+      WARNING_LOG("Cannot parse PocketStation hardware ID '{}', using {:08X}.", hardware_id, FALLBACK_HARDWARE_ID);
+      id = FALLBACK_HARDWARE_ID;
     }
   }
   psemu_set_hardware_id(ret->m_ps, id);
