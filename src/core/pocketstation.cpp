@@ -52,9 +52,12 @@ std::string PocketStation::FormatHardwareId(u32 id)
   return std::string(buf);
 }
 
-std::string PocketStation::GetDefaultHardwareId()
+std::string PocketStation::GetDefaultHardwareId(u32 slot)
 {
-  return FormatHardwareId(PSEMU_DEFAULT_HARDWARE_ID);
+  // A real unit carries a serial of one letter and decimal digits. Vary the letter per slot, and
+  // keep the digits: an app reads the low 24 bits of the serial and derives a save statistic from
+  // them, and the value in the core's default is the one that gives a new save the best result.
+  return FormatHardwareId((static_cast<u32>('A' + slot) << 24) | (PSEMU_DEFAULT_HARDWARE_ID & 0x00FFFFFFu));
 }
 
 std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios, std::string_view hardware_id,

@@ -39,9 +39,12 @@ public:
   // back to the default.
   static std::unique_ptr<PocketStation> Create(std::span<const u8> bios, std::string_view hardware_id, Error* error);
 
-  // Canonical 8-hex-digit form of a hardware ID, and the default when none is set.
+  // Canonical 8-hex-digit form of a hardware ID.
   static std::string FormatHardwareId(u32 id);
-  static std::string GetDefaultHardwareId();
+
+  // Default serial for a slot. Each slot gets a different one, because two devices do not share a
+  // serial, and an app can derive save content from it.
+  static std::string GetDefaultHardwareId(u32 slot);
 
   // Exchanges one byte with the console. Returns true when the device acknowledges.
   //

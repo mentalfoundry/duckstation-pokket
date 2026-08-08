@@ -338,7 +338,7 @@ void MemoryCardSettingsWidget::createPortSettingsUi(u32 index, PortSettingsUI* u
   ui->pocketstation_id->setMaxLength(8);
   ui->pocketstation_id->setValidator(
     new QRegularExpressionValidator(QRegularExpression(u"[0-9A-Fa-f]{0,8}"_s), ui->pocketstation_id));
-  ui->pocketstation_id->setPlaceholderText(QString::fromStdString(PocketStation::GetDefaultHardwareId()));
+  ui->pocketstation_id->setPlaceholderText(QString::fromStdString(PocketStation::GetDefaultHardwareId(index)));
   SettingWidgetBinder::BindWidgetToStringSetting(m_dialog->getSettingsInterface(), ui->pocketstation_id, "MemoryCards",
                                                  fmt::format("Card{}PocketStationID", index + 1));
   pocketstation_layout->addWidget(ui->pocketstation_id);

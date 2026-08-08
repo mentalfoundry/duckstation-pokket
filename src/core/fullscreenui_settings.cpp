@@ -14,6 +14,7 @@
 #include "gte.h"
 #include "host.h"
 #include "input_types.h"
+#include "pocketstation.h"
 #include "settings.h"
 #include "system.h"
 #include "video_presenter.h"
@@ -4360,7 +4361,9 @@ void FullscreenUI::DrawMemoryCardSettingsPage()
     const bool pocketstation_enabled = GetEffectiveBoolSetting(bsi, "MemoryCards", skey.c_str(), false);
 
     skey.format("Card{}PocketStationID", i + 1);
-    const TinyString pocketstation_id = GetEffectiveTinyStringSetting(bsi, "MemoryCards", skey.c_str(), "410000D3");
+    const std::string default_pocketstation_id = PocketStation::GetDefaultHardwareId(i);
+    const TinyString pocketstation_id =
+      GetEffectiveTinyStringSetting(bsi, "MemoryCards", skey.c_str(), default_pocketstation_id.c_str());
 
     TinyString id_title;
     id_title.format("{}##pocketstation_id_{}", FSUI_ICONVSTR(ICON_FA_MICROCHIP, "Device ID"), i);
