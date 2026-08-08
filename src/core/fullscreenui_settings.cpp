@@ -14,7 +14,6 @@
 #include "gte.h"
 #include "host.h"
 #include "input_types.h"
-#include "pocketstation.h"
 #include "settings.h"
 #include "system.h"
 #include "video_presenter.h"
@@ -4349,84 +4348,6 @@ void FullscreenUI::DrawMemoryCardSettingsPage()
                            bsi->SetStringValue("MemoryCards", key,
                                                Path::MakeRelative(names[index], EmuFolders::MemoryCards).c_str());
                          }
-                         SetSettingsChanged(bsi);
-                       });
-    }
-
-    skey.format("Card{}PocketStation", i + 1);
-    DrawToggleSetting(bsi, FSUI_ICONVSTR(ICON_FA_MICROCHIP, "Use PocketStation"),
-                      FSUI_VSTR("Puts a PocketStation in this slot instead of an ordinary memory card. Needs the "
-                                "PocketStation BIOS image to be set."),
-                      "MemoryCards", skey.c_str(), false);
-    const bool pocketstation_enabled = GetEffectiveBoolSetting(bsi, "MemoryCards", skey.c_str(), false);
-
-    skey.format("Card{}PocketStationID", i + 1);
-    const std::string default_pocketstation_id = PocketStation::GetDefaultHardwareId(i);
-    const TinyString pocketstation_id =
-      GetEffectiveTinyStringSetting(bsi, "MemoryCards", skey.c_str(), default_pocketstation_id.c_str());
-
-    TinyString id_title;
-    id_title.format("{}##pocketstation_id_{}", FSUI_ICONVSTR(ICON_FA_MICROCHIP, "Device ID"), i);
-    if (MenuActionButton(id_title,
-                         FSUI_VSTR("Serial of the device, as 8 hex digits. An app can read this and derive save "
-                                   "content from it, so each slot has its own."),
-                         pocketstation_id.view(), pocketstation_enabled))
-    {
-      // skey is reused by the next slot, so the callback gets its own copy of the key.
-      OpenInputStringDialog(id_title, FSUI_STR("Enter the device ID, as 8 hex digits."), FSUI_STR("Device ID:"),
-                            FSUI_ICONSTR(ICON_FA_CHECK, "Save"), std::string(pocketstation_id.view()),
-                            [game_settings = IsEditingGameSettings(bsi),
-                             key = std::string(skey.view())](std::string new_id) {
-                              const auto lock = Core::GetSettingsLock();
-                              SettingsInterface* bsi = GetEditingSettingsInterface(game_settings);
-                              if (new_id.empty())
-                                bsi->DeleteValue("MemoryCards", key.c_str());
-                              else
-                                bsi->SetStringValue("MemoryCards", key.c_str(), new_id.c_str());
-                              SetSettingsChanged(bsi);
-                            });
-    }
-  }
-
-  MenuHeading(FSUI_VSTR("PocketStation"));
-
-  {
-    const std::optional<SmallString> bios_value(
-      bsi->GetOptionalSmallStringValue("MemoryCards", "PocketStationBiosPath", std::nullopt));
-
-    TinyString title;
-    title.assign(FSUI_ICONVSTR(ICON_FA_FILE, "BIOS Image"));
-    if (MenuActionButton(title,
-                         FSUI_VSTR("The BIOS image of the PocketStation. The device answers each memory card command "
-                                   "from this image, so a slot cannot hold one without it."),
-                         bios_value.has_value() ? bios_value->view() : FSUI_VSTR("Unset")))
-    {
-      // A file browser, not a list of the BIOS directory: that directory holds console images, and
-      // there is no reason for this one to be in it.
-      std::string initial_directory;
-      if (bios_value.has_value() && !bios_value->empty())
-        initial_directory = Path::GetDirectory(bios_value->view());
-
-      OpenFileSelector(FSUI_ICONVSTR(ICON_FA_FILE, "Select PocketStation BIOS"), {"*.bin", "*.rom", "*"},
-                       std::move(initial_directory),
-                       [game_settings = IsEditingGameSettings(bsi)](const std::string& path) {
-                         if (path.empty())
-                           return;
-
-                         // Reject the wrong file here, where the user is still looking at the
-                         // chooser, rather than at the next boot.
-                         if (FileSystem::GetPathFileSize(path.c_str()) != static_cast<s64>(PocketStation::BIOS_SIZE))
-                         {
-                           OpenInfoMessageDialog(
-                             ICON_EMOJI_WARNING, FSUI_STR("PocketStation BIOS"),
-                             fmt::format(FSUI_FSTR("{0} is not a PocketStation BIOS. That image is {1} bytes."),
-                                         Path::GetFileName(path), static_cast<u32>(PocketStation::BIOS_SIZE)));
-                           return;
-                         }
-
-                         const auto lock = Core::GetSettingsLock();
-                         SettingsInterface* bsi = GetEditingSettingsInterface(game_settings);
-                         bsi->SetStringValue("MemoryCards", "PocketStationBiosPath", path.c_str());
                          SetSettingsChanged(bsi);
                        });
     }
