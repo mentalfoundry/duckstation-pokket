@@ -41,10 +41,14 @@ public:
   // the command being complete.
   bool Transfer(u8 data_in, u8* data_out);
 
-  // Releases the select line at the end of a command, and runs the machine so the device can act on
-  // it. Its BIOS learns that a command ended from this release and waits for it after the last
-  // byte, so without it the device answers one command and then answers nothing.
-  void ResetTransferState();
+  // Releases the select line at the end of a command. When was_accessed is true, also runs the
+  // settle frames so the device can act on the release: its BIOS waits for this release after the
+  // last byte, and without it the device answers one command and then answers nothing.
+  //
+  // was_accessed must be false when the device was not involved in the transaction (e.g. a
+  // controller poll); in that case the settle frames are skipped to avoid burning ARM interpreter
+  // time on every SELECT deassert regardless of what was addressed.
+  void ResetTransferState(bool was_accessed);
 
   // Copies the card image into the flash of the device, and back out again. The flash of a
   // PocketStation is the memory card storage, so these are the join between MemoryCard::m_data and

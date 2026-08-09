@@ -105,12 +105,15 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
   return (psemu_com_transfer(m_ps, data_in, data_out, PSEMU_COM_DEFAULT_TIMEOUT_CYCLES) != 0);
 }
 
-void PocketStation::ResetTransferState()
+void PocketStation::ResetTransferState(bool was_accessed)
 {
   psemu_com_set_selected(m_ps, 0);
 
-  for (u32 i = 0; i < SETTLE_FRAMES; i++)
-    psemu_run(m_ps, FRAME_CYCLES);
+  if (was_accessed)
+  {
+    for (u32 i = 0; i < SETTLE_FRAMES; i++)
+      psemu_run(m_ps, FRAME_CYCLES);
+  }
 }
 
 void PocketStation::LoadFlash(const MemoryCardImage::DataArray& data)

@@ -186,15 +186,23 @@ void MemoryCard::ResetTransferState()
   {
     // The device learns that a command ended from the release of the select line, and it waits for
     // that release after the last byte. Without it, it answers one command and then answers nothing.
-    m_pocketstation->ResetTransferState();
+    //
+    // Both the settle frames and the flash compare are skipped when the device was not addressed in
+    // this transaction (e.g. a controller poll on the same SIO bus deasserts SELECT too). Running
+    // them on every deassert would burn ARM interpreter time proportional to controller poll rate.
+    m_pocketstation->ResetTransferState(m_pocketstation_accessed);
 
-    // A command can have changed the flash, and the device also writes its own flash while an app
-    // runs. Neither shows up as a write through the state machine below, so the contents are
-    // compared rather than tracked.
-    if (m_pocketstation->SaveFlash(&m_data))
+    if (m_pocketstation_accessed)
     {
-      m_changed = true;
-      QueueFileSave();
+      // A command can have changed the flash, and the device also writes its own flash while an app
+      // runs. Neither shows up as a write through the state machine below, so the contents are
+      // compared rather than tracked.
+      if (m_pocketstation->SaveFlash(&m_data))
+      {
+        m_changed = true;
+        QueueFileSave();
+      }
+      m_pocketstation_accessed = false;
     }
   }
 
@@ -211,7 +219,10 @@ bool MemoryCard::Transfer(const u8 data_in, u8* data_out)
   // the protocol, and commands 5Bh/5Ch dispatch into the app file, so none of it can be answered
   // from here.
   if (m_pocketstation)
+  {
+    m_pocketstation_accessed = true;
     return m_pocketstation->Transfer(data_in, data_out);
+  }
 
   bool ack = false;
 #if defined(_DEBUG) || defined(_DEVEL)

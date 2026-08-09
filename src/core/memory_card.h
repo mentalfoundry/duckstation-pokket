@@ -139,4 +139,9 @@ private:
   // copy of the device's flash, refreshed at each command boundary: the device writes its own flash
   // while an app runs, so the contents can change with no console write to observe.
   std::unique_ptr<PocketStation> m_pocketstation;
+
+  // True from the first Transfer() call in a transaction to the following ResetTransferState().
+  // The settle frames and flash compare only run when this is set; both are no-ops when the device
+  // was not addressed in the transaction (e.g. a controller poll on the same SIO bus).
+  bool m_pocketstation_accessed = false;
 };
