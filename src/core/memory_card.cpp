@@ -66,13 +66,9 @@ void MemoryCard::Reset()
 
 bool MemoryCard::AttachPocketStation(std::span<const u8> bios, Error* error)
 {
-  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_index, error);
+  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_data, m_index, error);
   if (!ps)
     return false;
-
-  // Hand it whatever this slot already holds. The flash of the device is the card storage, so the
-  // existing image is valid content for it, and the device reads its directory from there.
-  ps->LoadFlash(m_data);
 
   m_pocketstation = std::move(ps);
   INFO_LOG("Memory card {} is a PocketStation.", m_index + 1u);
@@ -197,8 +193,17 @@ void MemoryCard::ResetTransferState()
       // A command can have changed the flash, and the device also writes its own flash while an app
       // runs. Neither shows up as a write through the state machine below, so the contents are
       // compared rather than tracked.
-      if (m_pocketstation->SaveFlash(&m_data))
+      bool needs_reboot = false;
+      if (m_pocketstation->SaveFlash(&m_data, &needs_reboot))
       {
+        if (needs_reboot)
+        {
+          // An app was just installed while the device was running. The BIOS scans the
+          // directory at boot to set the auto-start slot (RAM[0xCE]). Rebooting here runs
+          // that scan with the new app present. This is the emulation of a physical reconnect.
+          INFO_LOG("PocketStation: new app installed mid-session, rebooting.");
+          m_pocketstation->Reboot(m_data);
+        }
         m_changed = true;
         QueueFileSave();
       }
