@@ -193,20 +193,12 @@ void MemoryCard::ResetTransferState()
       // A command can have changed the flash, and the device also writes its own flash while an app
       // runs. Neither shows up as a write through the state machine below, so the contents are
       // compared rather than tracked.
-      bool needs_reboot = false;
-      if (m_pocketstation->SaveFlash(&m_data, &needs_reboot))
+      if (m_pocketstation->SaveFlash(&m_data))
       {
-        if (needs_reboot)
-        {
-          // An app was just installed while the device was running. The BIOS scans the
-          // directory at boot to set the auto-start slot (RAM[0xCE]). Rebooting here runs
-          // that scan with the new app present. This is the emulation of a physical reconnect.
-          INFO_LOG("PocketStation: new app installed mid-session, rebooting.");
-          m_pocketstation->Reboot(m_data);
-        }
         m_changed = true;
         QueueFileSave();
       }
+
       m_pocketstation_accessed = false;
     }
   }

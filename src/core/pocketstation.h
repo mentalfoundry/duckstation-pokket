@@ -41,15 +41,6 @@ public:
                                                const MemoryCardImage::DataArray& flash, u32 slot,
                                                Error* error);
 
-  // Resets the machine and re-runs the boot and dock sequence with the supplied card image. Used
-  // when an app is downloaded to the card while the device is running: the BIOS scans the
-  // directory at boot to set the auto-start slot (RAM[0xCE]), and that scan needs to see the
-  // new app. This is the emulation of a physical disconnect and reconnect.
-  //
-  // Returns true when communication is re-enabled after docking. A false return leaves the device
-  // in a non-communicating state; the caller should log and continue.
-  bool Reboot(const MemoryCardImage::DataArray& flash);
-
   // Exchanges one byte with the console. Returns true when the device acknowledges.
   //
   // This runs the emulated CPU, since the reply comes from an interrupt handler on the device. A
@@ -74,11 +65,7 @@ public:
   // Reads the flash back out, and returns true when it differs from what data already held. It
   // compares rather than tracking writes, because the device writes its own flash while an app
   // runs.
-  //
-  // When needs_reboot is non-null and the flash change shows a newly-complete PocketStation app
-  // chain in the directory (MCX0 type, chain intact) that was absent or incomplete before, it is
-  // set to true. The caller should then call Reboot() so the BIOS picks up the new app.
-  bool SaveFlash(MemoryCardImage::DataArray* data, bool* needs_reboot = nullptr) const;
+  bool SaveFlash(MemoryCardImage::DataArray* data) const;
 
   // Size of the machine state in bytes. Measuring it walks every field of the machine, and the core
   // keeps it constant for a given build, so it is measured once at construction instead.

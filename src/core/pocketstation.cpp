@@ -208,9 +208,13 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
 
 bool PocketStation::Transfer(u8 data_in, u8* data_out)
 {
+  if (psemu_cpu_faulted(m_ps))
+    WARNING_LOG("PocketStation: CPU faulted before byte {}.", m_cmd_byte_pos);
   const bool acked = (psemu_com_transfer(m_ps, data_in, data_out, PSEMU_COM_DEFAULT_TIMEOUT_CYCLES) != 0);
   // Byte 0 is the PS1 device-address byte (0x81). Byte 1 is the command byte.
-  if (m_cmd_byte_pos == 1u)
+  if (m_cmd_byte_pos == 0u)
+    INFO_LOG("PocketStation: sel=0x{:02X} out=0x{:02X} ACK={}", data_in, *data_out, acked);
+  else if (m_cmd_byte_pos == 1u)
   {
     m_cmd_in_progress = data_in;
     INFO_LOG("PocketStation: cmd=0x{:02X} flag=0x{:02X} ACK={}", data_in, *data_out, acked);
@@ -218,8 +222,11 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
   else if (m_cmd_byte_pos >= 2u && (m_cmd_in_progress == 0x58u || m_cmd_in_progress == 0x5Du))
     INFO_LOG("PocketStation: 0x{:02X} byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_in_progress,
              m_cmd_byte_pos, data_in, *data_out, acked);
+  else if (m_cmd_byte_pos >= 135u && m_cmd_in_progress == 0x57u)
+    INFO_LOG("PocketStation: 0x57 tail byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_byte_pos, data_in,
+             *data_out, acked);
   else if (!acked && m_cmd_byte_pos > 1u)
-    INFO_LOG("PocketStation: NACK at byte {} of current command.", m_cmd_byte_pos);
+    INFO_LOG("PocketStation: NACK at byte {} of current command (out=0x{:02X}).", m_cmd_byte_pos, *data_out);
   m_cmd_byte_pos++;
   if (!acked)
   {
@@ -244,137 +251,25 @@ void PocketStation::ResetTransferState(bool was_accessed)
   }
 }
 
-bool PocketStation::Reboot(const MemoryCardImage::DataArray& flash)
-{
-  VERBOSE_LOG("Rebooting PocketStation to reload dispatch table after app installation.");
-
-  if (psemu_load_flash_image(m_ps, flash.data(), flash.size()) != PSEMU_OK)
-  {
-    ERROR_LOG("Failed to reload flash for PocketStation reboot.");
-    return false;
-  }
-
-  psemu_reset(m_ps);
-  psemu_set_hardware_id(m_ps, m_slot + 1);
-
-  for (u32 i = 0; i < BOOT_FRAMES; i++)
-    psemu_run(m_ps, FRAME_CYCLES);
-
-  psemu_com_set_docked(m_ps, 1);
-
-  bool enabled = false;
-  for (u32 i = 0; i < DOCK_FRAMES; i++)
-  {
-    psemu_run(m_ps, FRAME_CYCLES);
-    if (psemu_com_is_enabled(m_ps))
-    {
-      enabled = true;
-      break;
-    }
-  }
-
-  if (!enabled)
-    ERROR_LOG("PocketStation did not re-enable communication after reboot.");
-  else
-    SetActiveAppSlot(m_ps, flash);
-
-  return enabled;
-}
-
 void PocketStation::LoadFlash(const MemoryCardImage::DataArray& data)
 {
   if (psemu_load_flash_image(m_ps, data.data(), data.size()) != PSEMU_OK)
     ERROR_LOG("Failed to load card image into PocketStation flash.");
 }
 
-// Returns true when the directory chain starting at first_frame is complete (ends at a block with
-// allocation state 0x53 or at a single-block entry with next=0xFFFF).
-static bool IsChainComplete(const MemoryCardImage::DataArray& flash, u32 first_frame)
-{
-  u32 cur = first_frame;
-  for (u32 depth = 0; depth < 15; depth++)
-  {
-    const u8 state = flash[cur * 0x80u];
-    if (state == 0x53u)
-      return true;
-    if (state != 0x51u && state != 0x52u)
-      return false;
-
-    const u16 next = static_cast<u16>(flash[cur * 0x80u + 8u]) |
-                     (static_cast<u16>(flash[cur * 0x80u + 9u]) << 8u);
-    if (next == 0xFFFFu)
-      return true; // single-block file
-
-    // "next" stores (block_number - 1); block_number maps to the same-numbered directory frame.
-    const u32 next_frame = static_cast<u32>(next) + 1u;
-    if (next_frame < 1u || next_frame > 15u)
-      return false;
-    cur = next_frame;
-  }
-  return false;
-}
-
-// Returns true when a complete PocketStation app (MCX0 type, intact block chain) exists in
-// new_flash but was absent or incomplete in old_flash. This indicates the BIOS needs to reboot
-// to pick up the newly-installed app.
-static bool HasNewCompleteApp(const MemoryCardImage::DataArray& old_flash,
-                              const MemoryCardImage::DataArray& new_flash)
-{
-  // Directory frames 1-15 sit at offsets 0x080-0x780 in block 0 of the flash.
-  // Frame N covers the allocation state of data block N.
-  for (u32 frame = 1u; frame <= 15u; frame++)
-  {
-    if (new_flash[frame * 0x80u] != 0x51u)
-      continue; // Not a first-block entry.
-
-    // The PS1 title sector of each data block carries a four-byte type identifier at offset 0x52.
-    // "MCX0" marks a PocketStation application.
-    const u32 block_start = frame * 0x2000u;
-    if (new_flash[block_start + 0x52u] != 'M' || new_flash[block_start + 0x53u] != 'C' ||
-        new_flash[block_start + 0x54u] != 'X' || new_flash[block_start + 0x55u] != '0')
-      continue;
-
-    // Skip chains that are not yet fully written (e.g., directory entries still being filled in).
-    if (!IsChainComplete(new_flash, frame))
-      continue;
-
-    // Only reboot when this app is new. A complete chain in old_flash without the MCX0 type
-    // marker means the directory entry was written before the title sector — a partial install
-    // that crossed a flash-save boundary. Treat it as absent so the reboot fires when the
-    // title sector arrives.
-    const bool old_had_mcx0 = IsChainComplete(old_flash, frame) &&
-                              old_flash[block_start + 0x52u] == 'M' &&
-                              old_flash[block_start + 0x53u] == 'C' &&
-                              old_flash[block_start + 0x54u] == 'X' &&
-                              old_flash[block_start + 0x55u] == '0';
-    if (!old_had_mcx0)
-      return true;
-  }
-  return false;
-}
-
-bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data, bool* needs_reboot) const
+bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data) const
 {
   MemoryCardImage::DataArray flash;
   if (psemu_save_flash_image(m_ps, flash.data(), flash.size()) != PSEMU_OK)
   {
     ERROR_LOG("Failed to read PocketStation flash.");
-    if (needs_reboot)
-      *needs_reboot = false;
     return false;
   }
 
   // The device writes its own flash while an app runs, so a change can happen with no console write
   // at all. That is why this compares instead of trusting a write path to have set a flag.
   if (flash == *data)
-  {
-    if (needs_reboot)
-      *needs_reboot = false;
     return false;
-  }
-
-  if (needs_reboot)
-    *needs_reboot = HasNewCompleteApp(*data, flash);
 
   *data = flash;
   return true;
