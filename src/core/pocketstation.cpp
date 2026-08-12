@@ -85,7 +85,7 @@ static void SetActiveAppSlot(psemu_t* ps, const MemoryCardImage::DataArray& flas
   const u8 bios_slot = (d0 != 0u) ? static_cast<u8>(d0) : ram[RAM_SLOT_CE];
 
   // Log RAM state so the log shows whether boot set a slot or left it at zero.
-  INFO_LOG("PocketStation: boot RAM: CE=0x{:02X} D0=0x{:04X} -> boot slot {}.", ram[RAM_SLOT_CE], d0, bios_slot);
+  INFO_LOG("PocketStation: RAM CE=0x{:02X} D0=0x{:04X} -> active slot {}.", ram[RAM_SLOT_CE], d0, bios_slot);
 
   if (bios_slot != 0u)
   {
@@ -257,7 +257,7 @@ void PocketStation::LoadFlash(const MemoryCardImage::DataArray& data)
     ERROR_LOG("Failed to load card image into PocketStation flash.");
 }
 
-bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data) const
+bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data)
 {
   MemoryCardImage::DataArray flash;
   if (psemu_save_flash_image(m_ps, flash.data(), flash.size()) != PSEMU_OK)
@@ -270,6 +270,12 @@ bool PocketStation::SaveFlash(MemoryCardImage::DataArray* data) const
   // at all. That is why this compares instead of trusting a write path to have set a flag.
   if (flash == *data)
     return false;
+
+  // When an app first appears in flash (valid directory entry now but absent before), patch
+  // RAM[0xCE] so the kernel dispatches 0x5B/0x5C to the correct function table. This covers
+  // the case where the card was blank at boot and an app was downloaded mid-session.
+  if (FindFirstAppSlot(data->data()) == 0u && FindFirstAppSlot(flash.data()) != 0u)
+    SetActiveAppSlot(m_ps, flash);
 
   *data = flash;
   return true;

@@ -195,6 +195,7 @@ void MemoryCard::ResetTransferState()
       // compared rather than tracked.
       if (m_pocketstation->SaveFlash(&m_data))
       {
+        INFO_LOG("PocketStation: flash changed.");
         m_changed = true;
         QueueFileSave();
       }

@@ -65,7 +65,7 @@ public:
   // Reads the flash back out, and returns true when it differs from what data already held. It
   // compares rather than tracking writes, because the device writes its own flash while an app
   // runs.
-  bool SaveFlash(MemoryCardImage::DataArray* data) const;
+  bool SaveFlash(MemoryCardImage::DataArray* data);
 
   // Size of the machine state in bytes. Measuring it walks every field of the machine, and the core
   // keeps it constant for a given build, so it is measured once at construction instead.
