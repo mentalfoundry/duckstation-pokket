@@ -50,6 +50,12 @@ constexpr u32 ARM_IDLE_CHUNK = 256u;
 // ARM clock setting.
 constexpr u64 SELECT_BURST_CYCLES = ARM_IDLE_CHUNK * 32u;
 
+// Frames to run with INT_IOP clear after each SELECT release. The real PS1 holds INT_IOP high
+// for the full session (dock sense follows supply voltage, not SELECT). App functions in the
+// Chocobo World app gate their flash writes on INT_IOP == 0, expecting to see it clear between
+// commands. Without this pulse those handlers spin and never write to flash.
+constexpr u32 COM_UNDOCK_FRAMES = 10u;
+
 } // namespace
 
 // Returns the directory slot (1-15) of the first PocketStation app on the card, or 0 when the
@@ -430,6 +436,16 @@ void PocketStation::ResetTransferState(bool was_accessed)
       if (psemu_cpu_faulted(m_ps))
         ERROR_LOG("PocketStation: CPU fault at command end. Register state is invalid.");
       psemu_com_set_selected(m_ps, 0);
+      psemu_com_set_docked(m_ps, 0);
+      for (u32 f = 0u; f < COM_UNDOCK_FRAMES; f++)
+        psemu_run(m_ps, FRAME_CYCLES);
+      psemu_com_set_docked(m_ps, 1);
+      for (u32 f = 0u; f < DOCK_FRAMES; f++)
+      {
+        psemu_run(m_ps, FRAME_CYCLES);
+        if (psemu_com_is_enabled(m_ps))
+          break;
+      }
     }
     // Wake the ARM thread immediately so the BIOS end-of-command path runs without waiting for
     // the next periodic tick.
