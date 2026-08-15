@@ -44,6 +44,16 @@ MemoryCard::MemoryCard(u32 index)
 
 MemoryCard::~MemoryCard()
 {
+  if (m_pocketstation)
+  {
+    // PrepareForSave stops the ARM thread, triggers the hold-save, and clears the LCD
+    // rotation bit. It must run before SaveFlash and ExportQuicksave so both see the
+    // final app state and the exported quicksave loads with standalone orientation.
+    m_pocketstation->PrepareForSave();
+    m_pocketstation->SaveFlash(&m_data);
+    if (!m_path.empty())
+      m_pocketstation->ExportQuicksave(m_path + ".sav");
+  }
   SaveIfChanged(false);
 }
 
@@ -73,6 +83,11 @@ bool MemoryCard::AttachPocketStation(std::span<const u8> bios, Error* error)
   m_pocketstation = std::move(ps);
   INFO_LOG("Memory card {} is a PocketStation.", m_index + 1u);
   return true;
+}
+
+bool MemoryCard::ReadPocketStationFramebuffer(std::array<u8, 128>& buf)
+{
+  return m_pocketstation ? m_pocketstation->ReadFramebuffer(buf) : false;
 }
 
 u32 MemoryCard::GetStateSize() const
@@ -180,12 +195,10 @@ void MemoryCard::ResetTransferState()
 {
   if (m_pocketstation)
   {
-    // The device learns that a command ended from the release of the select line, and it waits for
-    // that release after the last byte. Without it, it answers one command and then answers nothing.
-    //
-    // Both the settle frames and the flash compare are skipped when the device was not addressed in
-    // this transaction (e.g. a controller poll on the same SIO bus deasserts SELECT too). Running
-    // them on every deassert would burn ARM interpreter time proportional to controller poll rate.
+    // The device learns that a command ended from the release of the select line. The ARM thread
+    // is running continuously and detects that release without any settle frames. The select
+    // release and the flash compare are skipped when the device was not addressed in this
+    // transaction (e.g. a controller poll on the same SIO bus deasserts SELECT too).
     m_pocketstation->ResetTransferState(m_pocketstation_accessed);
 
     if (m_pocketstation_accessed)

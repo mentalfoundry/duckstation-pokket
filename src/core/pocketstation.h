@@ -4,11 +4,17 @@
 #pragma once
 
 #include "memory_card_image.h"
+#include "psemu/psemu.h"
 
 #include "common/types.h"
 
+#include <array>
+#include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <span>
+#include <thread>
 
 class Error;
 class StateWrapper;
@@ -48,13 +54,11 @@ public:
   // the command being complete.
   bool Transfer(u8 data_in, u8* data_out);
 
-  // Releases the select line at the end of a command. When was_accessed is true, also runs the
-  // settle frames so the device can act on the release: its BIOS waits for this release after the
-  // last byte, and without it the device answers one command and then answers nothing.
+  // Releases the select line at the end of a command.
   //
   // was_accessed must be false when the device was not involved in the transaction (e.g. a
-  // controller poll); in that case the settle frames are skipped to avoid burning ARM interpreter
-  // time on every SELECT deassert regardless of what was addressed.
+  // controller poll); in that case the select release is skipped since the device was never
+  // selected.
   void ResetTransferState(bool was_accessed);
 
   // Copies the card image into the flash of the device, and back out again. The flash of a
@@ -73,10 +77,38 @@ public:
 
   bool DoState(StateWrapper& sw);
 
+  // Stops the ARM thread, triggers the hold-save, clears the docked flag, and clears the LCD
+  // rotation bit. Call this before SaveFlash and ExportQuicksave so both see the final app state
+  // and the exported state loads with standalone orientation in pokketstation.
+  void PrepareForSave();
+
+  // Copies the current 32x32 1bpp framebuffer into buf (128 bytes, 4 bytes per row, bit 0 is the
+  // leftmost pixel, 0 = white, 1 = black). Returns true when the framebuffer changed since the
+  // last call and buf was updated; returns false and leaves buf unchanged when there is no change.
+  bool ReadFramebuffer(std::array<u8, PSEMU_LCD_WIDTH * PSEMU_LCD_HEIGHT / 8>& buf);
+
+  // Writes a pokketstation-compatible quicksave (slot 0 format) to path. The file holds the full
+  // machine state and can be loaded directly by the pokketstation desktop frontend when it opens
+  // the same card image. Call after the hold-save sequence so flash holds the latest app data.
+  void ExportQuicksave(const std::string& path) const;
+
 private:
+  void ARMThreadFunc();
+
   psemu* m_ps = nullptr;
   size_t m_state_size = 0;
   u32 m_slot = 0;
   u32 m_cmd_byte_pos = 0u;
   u8 m_cmd_in_progress = 0u;
+  bool m_app_slot_set = false;
+
+  // The ARM runs in a background thread. m_psemu_mutex protects all psemu state: the ARM thread
+  // holds it during psemu_run, and the main thread holds it during every psemu call. m_wake_cv
+  // lets ResetTransferState wake the ARM thread immediately after a SELECT release so the BIOS
+  // end-of-command path runs without waiting for the next periodic tick.
+  std::mutex m_psemu_mutex;
+  std::mutex m_wake_mutex;
+  std::condition_variable m_wake_cv;
+  std::thread m_arm_thread;
+  std::atomic<bool> m_arm_running{false};
 };
