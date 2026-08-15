@@ -426,6 +426,8 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
 
 void PocketStation::ResetTransferState(bool was_accessed)
 {
+  // Save before clearing: the undock pulse below is conditional on the command type.
+  const u8 last_cmd = m_cmd_in_progress;
   m_cmd_byte_pos = 0u;
   m_cmd_in_progress = 0u;
 
@@ -436,19 +438,29 @@ void PocketStation::ResetTransferState(bool was_accessed)
       if (psemu_cpu_faulted(m_ps))
         ERROR_LOG("PocketStation: CPU fault at command end. Register state is invalid.");
       psemu_com_set_selected(m_ps, 0);
-      psemu_com_set_docked(m_ps, 0);
-      for (u32 f = 0u; f < COM_UNDOCK_FRAMES; f++)
-        psemu_run(m_ps, FRAME_CYCLES);
-      psemu_com_set_docked(m_ps, 1);
-      for (u32 f = 0u; f < DOCK_FRAMES; f++)
+
+      // Apply the INT_IOP undock pulse only after dispatch commands (0x5B/0x5C). The Chocobo
+      // World fn#1 handler checks INT_IOP == 0 before it writes to flash; this pulse satisfies
+      // that check. Other commands (0x52 reads, 0x57 page writes, 0x58 polls) do not have app
+      // handlers that gate on INT_IOP, so they do not need settle frames. Running the pulse after
+      // 0x57 caused the ARM to process parameter writes during the settle period, making those
+      // writes visible to SaveFlash and triggering spurious mid-session card saves.
+      if (last_cmd == 0x5Bu || last_cmd == 0x5Cu)
       {
-        psemu_run(m_ps, FRAME_CYCLES);
-        if (psemu_com_is_enabled(m_ps))
-          break;
+        psemu_com_set_docked(m_ps, 0);
+        for (u32 f = 0u; f < COM_UNDOCK_FRAMES; f++)
+          psemu_run(m_ps, FRAME_CYCLES);
+        psemu_com_set_docked(m_ps, 1);
+        for (u32 f = 0u; f < DOCK_FRAMES; f++)
+        {
+          psemu_run(m_ps, FRAME_CYCLES);
+          if (psemu_com_is_enabled(m_ps))
+            break;
+        }
       }
     }
-    // Wake the ARM thread immediately so the BIOS end-of-command path runs without waiting for
-    // the next periodic tick.
+    // Wake the ARM thread so the BIOS end-of-command path runs without waiting for the next
+    // periodic tick.
     m_wake_cv.notify_one();
   }
 }
