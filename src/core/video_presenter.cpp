@@ -10,6 +10,8 @@
 #include "gpu_backend.h"
 #include "host.h"
 #include "imgui_overlays.h"
+#include "memory_card.h"
+#include "pad.h"
 #include "performance_counters.h"
 #include "save_state_version.h"
 #include "settings.h"
@@ -40,6 +42,9 @@
 #include "common/threading.h"
 #include "common/timer.h"
 
+#include "imgui.h"
+
+#include <array>
 #include <numbers>
 
 LOG_CHANNEL(GPU);
@@ -1503,6 +1508,58 @@ bool VideoPresenter::PresentFrame(GPUBackend* backend, u64 present_time)
 
   if (backend && !VideoThread::IsSystemPaused())
     ImGuiManager::RenderSoftwareCursors();
+
+  // PocketStation LCD overlay: 32x32 1bpp framebuffer drawn as a pixel grid in the bottom-right corner.
+  {
+    static std::array<u8, 128> s_ps_fb{};
+
+    bool has_ps = false;
+    for (u32 slot = 0; slot < 2u; slot++)
+    {
+      MemoryCard* const mc = Pad::GetMemoryCard(slot);
+      if (mc && mc->HasPocketStation())
+      {
+        mc->ReadPocketStationFramebuffer(s_ps_fb);
+        has_ps = true;
+        break;
+      }
+    }
+
+    if (has_ps)
+    {
+      const float scale = ImGuiManager::GetGlobalScale();
+      const float cell = std::max(1.0f, std::round(4.0f * scale));
+      const float grid = 32.0f * cell;
+      const float margin = 8.0f * scale;
+      const ImVec2 display = ImGui::GetIO().DisplaySize;
+      const float x0 = display.x - grid - margin;
+      const float y0 = display.y - grid - margin;
+
+      ImDrawList* const dl = ImGui::GetForegroundDrawList();
+
+      // Background.
+      dl->AddRectFilled(ImVec2(x0 - 2.0f, y0 - 2.0f),
+                        ImVec2(x0 + grid + 2.0f, y0 + grid + 2.0f),
+                        IM_COL32(255, 255, 255, 255));
+
+      // Pixels: bit 0 of each byte is the leftmost pixel; 1 = black, 0 = white.
+      for (u32 row = 0u; row < 32u; row++)
+      {
+        for (u32 col = 0u; col < 32u; col++)
+        {
+          const u32 byte_idx = row * 4u + col / 8u;
+          const u32 bit_idx  = col % 8u;
+          const bool on = (s_ps_fb[byte_idx] >> bit_idx) & 1u;
+          if (on)
+          {
+            const float px = x0 + static_cast<float>(col) * cell;
+            const float py = y0 + static_cast<float>(row) * cell;
+            dl->AddRectFilled(ImVec2(px, py), ImVec2(px + cell, py + cell), IM_COL32(0, 0, 0, 255));
+          }
+        }
+      }
+    }
+  }
 
   ImGuiManager::CreateDrawLists();
 
