@@ -50,11 +50,9 @@ constexpr u32 ARM_IDLE_CHUNK = 256u;
 // ARM clock setting.
 constexpr u64 SELECT_BURST_CYCLES = ARM_IDLE_CHUNK * 32u;
 
-// Frames to run with INT_IOP clear after each SELECT release. The real PS1 holds INT_IOP high
-// for the full session (dock sense follows supply voltage, not SELECT). App functions in the
-// Chocobo World app gate their flash writes on INT_IOP == 0, expecting to see it clear between
-// commands. Without this pulse those handlers spin and never write to flash.
-constexpr u32 COM_UNDOCK_FRAMES = 10u;
+// Frames to run after a SELECT release on dispatch commands (0x5B/0x5C), so the BIOS
+// end-of-command path and the app dispatch function complete before SaveFlash reads flash.
+constexpr u32 DISPATCH_SETTLE_FRAMES = 10u;
 
 } // namespace
 
@@ -175,16 +173,18 @@ void PocketStation::PrepareForSave()
   {
     std::vector<u8> snap(fl, fl + PSEMU_FLASH_SIZE);
     psemu_set_buttons(m_ps, PSEMU_BUTTON_FIRE);
-    for (u32 f = 0u; f < 300u; f++)
+    u32 hold_frames = 0u;
+    for (; hold_frames < 300u; hold_frames++)
     {
       psemu_run(m_ps, FRAME_CYCLES);
       if (std::memcmp(psemu_flash_data(m_ps), snap.data(), PSEMU_FLASH_SIZE) != 0)
-      {
-        VERBOSE_LOG("PocketStation: hold-save triggered after {} frames.", f + 1u);
         break;
-      }
     }
     psemu_set_buttons(m_ps, 0u);
+    if (hold_frames < 300u)
+      INFO_LOG("PocketStation: hold-save triggered after {} frames.", hold_frames + 1u);
+    else
+      INFO_LOG("PocketStation: hold-save: no flash change after 300 frames.");
   }
 
   // The dock interrupt handler sets ROT. The undock transition does not fire the handler:
@@ -380,7 +380,21 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
 
     if (psemu_cpu_faulted(m_ps))
       WARNING_LOG("PocketStation: CPU faulted before byte {}.", m_cmd_byte_pos);
-    acked = (psemu_com_transfer(m_ps, data_in, data_out, PSEMU_COM_DEFAULT_TIMEOUT_CYCLES) != 0);
+
+    // For the last byte of a dispatch command (0x5B/0x5C), the FIQ gets no ACK. It receives the
+    // byte and then waits for /SEL to drop before it runs its end-of-command path. Use the
+    // combined transfer+drop function so /SEL falls within the same cycle budget. That keeps the
+    // FIQ alive in its SELECT-drop wait when the latch fires.
+    constexpr u32 CHOCO_LAST_BYTE = 137u;
+    const bool is_dispatch_last =
+      (m_cmd_in_progress == 0x5Bu || m_cmd_in_progress == 0x5Cu) &&
+      m_cmd_byte_pos == CHOCO_LAST_BYTE;
+
+    if (is_dispatch_last)
+      acked = (psemu_com_transfer_and_select_drop(m_ps, data_in, data_out,
+                                                  PSEMU_COM_DEFAULT_TIMEOUT_CYCLES) != 0);
+    else
+      acked = (psemu_com_transfer(m_ps, data_in, data_out, PSEMU_COM_DEFAULT_TIMEOUT_CYCLES) != 0);
   }
 
   if (m_cmd_byte_pos == 1u)
@@ -426,7 +440,7 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
 
 void PocketStation::ResetTransferState(bool was_accessed)
 {
-  // Save before clearing: the undock pulse below is conditional on the command type.
+  // Save before clearing: the settle-frame block below is conditional on the command type.
   const u8 last_cmd = m_cmd_in_progress;
   m_cmd_byte_pos = 0u;
   m_cmd_in_progress = 0u;
@@ -439,23 +453,129 @@ void PocketStation::ResetTransferState(bool was_accessed)
         ERROR_LOG("PocketStation: CPU fault at command end. Register state is invalid.");
       psemu_com_set_selected(m_ps, 0);
 
-      // Apply the INT_IOP undock pulse only after dispatch commands (0x5B/0x5C). The Chocobo
-      // World fn#1 handler checks INT_IOP == 0 before it writes to flash; this pulse satisfies
-      // that check. Other commands (0x52 reads, 0x57 page writes, 0x58 polls) do not have app
-      // handlers that gate on INT_IOP, so they do not need settle frames. Running the pulse after
-      // 0x57 caused the ARM to process parameter writes during the settle period, making those
-      // writes visible to SaveFlash and triggering spurious mid-session card saves.
+      // Run settle frames after dispatch commands (0x5B/0x5C). The BIOS detects sel_drop_latch
+      // and calls the app dispatch function during these frames. INT_IOP stays set (docked)
+      // throughout, matching real hardware where dock sense follows supply voltage, not SELECT.
+      // Other commands (0x52, 0x57, 0x58) need no settle frames: their handlers complete
+      // within the transfer itself and do not write to flash on SELECT release.
       if (last_cmd == 0x5Bu || last_cmd == 0x5Cu)
       {
-        psemu_com_set_docked(m_ps, 0);
-        for (u32 f = 0u; f < COM_UNDOCK_FRAMES; f++)
-          psemu_run(m_ps, FRAME_CYCLES);
-        psemu_com_set_docked(m_ps, 1);
-        for (u32 f = 0u; f < DOCK_FRAMES; f++)
+        // Capture pre-settle snapshots for the report (0x5C only).
+        constexpr u32 CHOCO_BLOCK_BASE = 0x10000u;
+        constexpr u32 CHOCO_BLOCK_SIZE = 0x4000u; // 16 KB — covers all four 8 KB sub-blocks.
+        std::vector<u8> fl_snap;
+        std::vector<u8> ram_snap(PSEMU_RAM_SIZE, 0u);
+
+        const u8* fl_ptr = psemu_flash_data(m_ps);
+        const u8* ram_ptr = psemu_ram_data(m_ps);
+
+        if (fl_ptr && last_cmd == 0x5Cu)
         {
+          fl_snap.assign(fl_ptr + CHOCO_BLOCK_BASE, fl_ptr + CHOCO_BLOCK_BASE + CHOCO_BLOCK_SIZE);
+          INFO_LOG("PocketStation: pre-settle bankA 0x10200: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                   fl_ptr[0x10200], fl_ptr[0x10201], fl_ptr[0x10202], fl_ptr[0x10203],
+                   fl_ptr[0x10204], fl_ptr[0x10205], fl_ptr[0x10206], fl_ptr[0x10207]);
+          INFO_LOG("PocketStation: pre-settle bankB 0x10300: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                   fl_ptr[0x10300], fl_ptr[0x10301], fl_ptr[0x10302], fl_ptr[0x10303],
+                   fl_ptr[0x10304], fl_ptr[0x10305], fl_ptr[0x10306], fl_ptr[0x10307]);
+        }
+        if (ram_ptr && last_cmd == 0x5Cu)
+          std::memcpy(ram_snap.data(), ram_ptr, PSEMU_RAM_SIZE);
+
+        for (u32 f = 0u; f < DISPATCH_SETTLE_FRAMES; f++)
           psemu_run(m_ps, FRAME_CYCLES);
-          if (psemu_com_is_enabled(m_ps))
-            break;
+
+        const u8* fl_post = psemu_flash_data(m_ps);
+        const u8* ram_post = psemu_ram_data(m_ps);
+
+        if (fl_post && last_cmd == 0x5Cu)
+        {
+          INFO_LOG("PocketStation: post-settle bankA 0x10200: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                   fl_post[0x10200], fl_post[0x10201], fl_post[0x10202], fl_post[0x10203],
+                   fl_post[0x10204], fl_post[0x10205], fl_post[0x10206], fl_post[0x10207]);
+          INFO_LOG("PocketStation: post-settle bankB 0x10300: {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                   fl_post[0x10300], fl_post[0x10301], fl_post[0x10302], fl_post[0x10303],
+                   fl_post[0x10304], fl_post[0x10305], fl_post[0x10306], fl_post[0x10307]);
+
+          const char* const tmp_env = std::getenv("TEMP");
+          const std::string rpt_path = tmp_env ? (std::string(tmp_env) + "\\ps_settle.txt") : "ps_settle.txt";
+          FILE* rpt = std::fopen(rpt_path.c_str(), "w");
+          if (rpt)
+          {
+            // CPU state first — shows where the ARM is after settle frames.
+            psemu_write_crash_report(m_ps, rpt);
+
+            // RAM hex dump: user RAM 0x200–0x7FF. Kernel RAM 0x000–0x1FF is BIOS-owned and
+            // less useful here, but include it to show fn#1's incoming data buffer if any.
+            if (ram_post)
+            {
+              std::fprintf(rpt, "\n=== RAM pre-settle ===\n");
+              for (u32 i = 0u; i < PSEMU_RAM_SIZE; i++)
+              {
+                if ((i & 15u) == 0u)
+                  std::fprintf(rpt, "\n%04X:", i);
+                std::fprintf(rpt, " %02X", ram_snap[i]);
+              }
+              std::fprintf(rpt, "\n\n=== RAM post-settle ===\n");
+              for (u32 i = 0u; i < PSEMU_RAM_SIZE; i++)
+              {
+                if ((i & 15u) == 0u)
+                  std::fprintf(rpt, "\n%04X:", i);
+                std::fprintf(rpt, " %02X", ram_post[i]);
+              }
+              std::fprintf(rpt, "\n\n=== RAM changes ===\n");
+              bool any_ram = false;
+              for (u32 i = 0u; i < PSEMU_RAM_SIZE; i++)
+              {
+                if (ram_snap[i] != ram_post[i])
+                {
+                  std::fprintf(rpt, "  RAM[%04X]: %02X -> %02X\n", i, ram_snap[i], ram_post[i]);
+                  any_ram = true;
+                }
+              }
+              if (!any_ram)
+                std::fprintf(rpt, "  (none)\n");
+            }
+
+            // Flash diff: only Chocobo World block 8.
+            if (!fl_snap.empty())
+            {
+              std::fprintf(rpt, "\n=== Flash changes in block 8 (0x%05X–0x%05X) ===\n",
+                           CHOCO_BLOCK_BASE, CHOCO_BLOCK_BASE + CHOCO_BLOCK_SIZE - 1u);
+              bool any_fl = false;
+              for (u32 i = 0u; i < CHOCO_BLOCK_SIZE; i++)
+              {
+                if (fl_snap[i] != fl_post[CHOCO_BLOCK_BASE + i])
+                {
+                  std::fprintf(rpt, "  Flash[%05X]: %02X -> %02X\n",
+                               CHOCO_BLOCK_BASE + i, fl_snap[i], fl_post[CHOCO_BLOCK_BASE + i]);
+                  any_fl = true;
+                }
+              }
+              if (!any_fl)
+                std::fprintf(rpt, "  (none)\n");
+
+              // Full 128-byte bank dumps (post-settle).
+              std::fprintf(rpt, "\n=== Bank A post-settle (0x10200) ===\n");
+              for (u32 i = 0u; i < 0x80u; i++)
+              {
+                if ((i & 15u) == 0u)
+                  std::fprintf(rpt, "\n%05X:", 0x10200u + i);
+                std::fprintf(rpt, " %02X", fl_post[0x10200u + i]);
+              }
+              std::fprintf(rpt, "\n\n=== Bank B post-settle (0x10300) ===\n");
+              for (u32 i = 0u; i < 0x80u; i++)
+              {
+                if ((i & 15u) == 0u)
+                  std::fprintf(rpt, "\n%05X:", 0x10300u + i);
+                std::fprintf(rpt, " %02X", fl_post[0x10300u + i]);
+              }
+              std::fprintf(rpt, "\n");
+            }
+
+            std::fclose(rpt);
+            INFO_LOG("PocketStation: wrote diagnostic to ps_settle.txt");
+          }
         }
       }
     }

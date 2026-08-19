@@ -47,6 +47,7 @@ public:
   bool AttachPocketStation(std::span<const u8> bios, Error* error);
 
   bool HasPocketStation() const { return static_cast<bool>(m_pocketstation); }
+  bool ReadPocketStationFramebuffer(std::array<u8, 128>& buf);
 
   void Reset();
   bool DoState(StateWrapper& sw);

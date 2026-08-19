@@ -50,7 +50,8 @@ MemoryCard::~MemoryCard()
     // rotation bit. It must run before SaveFlash and ExportQuicksave so both see the
     // final app state and the exported quicksave loads with standalone orientation.
     m_pocketstation->PrepareForSave();
-    m_pocketstation->SaveFlash(&m_data);
+    if (m_pocketstation->SaveFlash(&m_data))
+      m_changed = true;
     if (!m_path.empty())
       m_pocketstation->ExportQuicksave(m_path + ".sav");
   }
