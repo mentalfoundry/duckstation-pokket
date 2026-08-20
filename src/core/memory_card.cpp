@@ -77,7 +77,8 @@ void MemoryCard::Reset()
 
 bool MemoryCard::AttachPocketStation(std::span<const u8> bios, Error* error)
 {
-  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_data, m_index, error);
+  const std::string quicksave_path = m_path.empty() ? std::string{} : m_path + ".sav";
+  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_data, m_index, quicksave_path, error);
   if (!ps)
     return false;
 

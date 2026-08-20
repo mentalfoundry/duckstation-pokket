@@ -50,11 +50,9 @@ constexpr u32 ARM_IDLE_CHUNK = 256u;
 // ARM clock setting.
 constexpr u64 SELECT_BURST_CYCLES = ARM_IDLE_CHUNK * 32u;
 
-// Frames to run with INT_IOP clear after each SELECT release. The real PS1 holds INT_IOP high
-// for the full session (dock sense follows supply voltage, not SELECT). App functions in the
-// Chocobo World app gate their flash writes on INT_IOP == 0, expecting to see it clear between
-// commands. Without this pulse those handlers spin and never write to flash.
-constexpr u32 COM_UNDOCK_FRAMES = 10u;
+// pokketstation quicksave format version this build writes and accepts. Must match the version
+// written by ExportQuicksave.
+constexpr u32 QUICKSAVE_VERSION = 7u;
 
 } // namespace
 
@@ -108,7 +106,19 @@ static void SetActiveAppSlot(psemu_t* ps)
 
   if (bios_slot != 0u)
   {
-    INFO_LOG("PocketStation: kernel selected app slot {}.", bios_slot);
+    // D0 is checked first for 0x5B/0x5C dispatch, but 0x58 reads CE directly. If the BIOS
+    // set D0 at boot (app found via directory scan) but left CE at zero (no user navigation),
+    // 0x58 dispatches to slot 0 and returns defaults. Mirror bios_slot into CE when CE is
+    // unset so both dispatch paths reach the same app.
+    if (ram[RAM_SLOT_CE] == 0u)
+    {
+      ram[RAM_SLOT_CE] = bios_slot;
+      INFO_LOG("PocketStation: kernel selected slot {} via D0; mirrored to CE.", bios_slot);
+    }
+    else
+    {
+      INFO_LOG("PocketStation: kernel selected app slot {}.", bios_slot);
+    }
     return;
   }
 
@@ -198,7 +208,7 @@ void PocketStation::PrepareForSave()
 
 std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
                                                      const MemoryCardImage::DataArray& flash, u32 slot,
-                                                     Error* error)
+                                                     const std::string& quicksave_path, Error* error)
 {
   std::unique_ptr<PocketStation> ret(new PocketStation());
 
@@ -224,20 +234,62 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
     return nullptr;
   }
 
-  psemu_reset(ret->m_ps);
+  ret->m_slot       = slot;
+  ret->m_state_size = psemu_state_size(ret->m_ps);
 
-  ret->m_slot = slot;
+  // Attempt to restore from a prior-session quicksave. A successful restore replaces the BIOS
+  // boot sequence: work RAM (and all other machine state) is from the end of that session, so
+  // data written via 0x5C dispatches survives across DuckStation restarts without needing the
+  // app to commit it to flash during the session.
+  bool loaded_from_quicksave = false;
+  if (!quicksave_path.empty())
+  {
+    const auto qs_data = FileSystem::ReadBinaryFile(quicksave_path.c_str());
+    if (qs_data.has_value() && qs_data->size() >= 16u + ret->m_state_size &&
+        std::memcmp(qs_data->data(), "PKQS", 4) == 0)
+    {
+      u32 qs_version, qs_app_size, qs_hash;
+      std::memcpy(&qs_version,  qs_data->data() + 4,  4);
+      std::memcpy(&qs_app_size, qs_data->data() + 8,  4);
+      std::memcpy(&qs_hash,     qs_data->data() + 12, 4);
 
-  // Before the machine runs: an app reads the serial when it makes a new save, so changing it after
-  // boot would not be seen consistently.
-  psemu_set_hardware_id(ret->m_ps, slot + 1);
+      const u8* const fl = psemu_flash_data(ret->m_ps);
+      if (fl && qs_version == QUICKSAVE_VERSION && qs_app_size == static_cast<u32>(PSEMU_FLASH_SIZE) &&
+          psemu_content_identity_hash(fl, PSEMU_FLASH_SIZE) == qs_hash)
+      {
+        if (psemu_load_state(ret->m_ps, qs_data->data() + 16, ret->m_state_size) == PSEMU_OK)
+        {
+          loaded_from_quicksave = true;
+          INFO_LOG("PocketStation: state restored from quicksave {}.", quicksave_path);
+        }
+        else
+        {
+          WARNING_LOG("PocketStation: quicksave {} state load failed; booting fresh.", quicksave_path);
+        }
+      }
+      else
+      {
+        VERBOSE_LOG("PocketStation: quicksave {} is for a different card or version; booting fresh.",
+                    quicksave_path);
+      }
+    }
+  }
 
-  for (u32 i = 0; i < BOOT_FRAMES; i++)
-    psemu_run(ret->m_ps, FRAME_CYCLES);
+  if (!loaded_from_quicksave)
+  {
+    psemu_reset(ret->m_ps);
+    // Before the machine runs: an app reads the serial when it makes a new save, so changing it
+    // after boot would not be seen consistently.
+    psemu_set_hardware_id(ret->m_ps, slot + 1);
+    for (u32 i = 0; i < BOOT_FRAMES; i++)
+      psemu_run(ret->m_ps, FRAME_CYCLES);
+  }
 
   // The kernel enables communication from an interrupt handler, and that handler waits before it
   // reads the docking level again. So the condition arrives a frame or more after the call, and a
   // transfer before it would get no answer.
+  // After a quicksave restore the machine was saved in undocked state; the dock interrupt fires
+  // when we assert the dock line and re-enables COM, just as it does on a cold boot.
   psemu_com_set_docked(ret->m_ps, 1);
 
   bool enabled = false;
@@ -251,15 +303,36 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
     }
   }
 
+  if (!enabled && loaded_from_quicksave)
+  {
+    // State was saved at an unusual point. Reload flash and try a cold boot.
+    WARNING_LOG("PocketStation: quicksave restore did not re-enable COM; falling back to cold boot.");
+    psemu_load_flash_image(ret->m_ps, flash.data(), flash.size());
+    psemu_reset(ret->m_ps);
+    psemu_set_hardware_id(ret->m_ps, slot + 1);
+    for (u32 i = 0; i < BOOT_FRAMES; i++)
+      psemu_run(ret->m_ps, FRAME_CYCLES);
+    psemu_com_set_docked(ret->m_ps, 1);
+    enabled = false;
+    for (u32 i = 0; i < DOCK_FRAMES; i++)
+    {
+      psemu_run(ret->m_ps, FRAME_CYCLES);
+      if (psemu_com_is_enabled(ret->m_ps))
+      {
+        enabled = true;
+        break;
+      }
+    }
+  }
+
   if (!enabled)
   {
     Error::SetStringView(error, "PocketStation BIOS did not enable communication after docking.");
     return nullptr;
   }
 
-  ret->m_state_size = psemu_state_size(ret->m_ps);
-
-  VERBOSE_LOG("PocketStation booted and docked, state size {} bytes.", ret->m_state_size);
+  VERBOSE_LOG("PocketStation {} and docked, state size {} bytes.",
+              loaded_from_quicksave ? "state restored" : "booted", ret->m_state_size);
 
   // All synchronous initialization is complete. Start the background ARM thread. From this point
   // on, all psemu calls on the main thread must hold m_psemu_mutex.
@@ -370,34 +443,43 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
   {
     std::lock_guard<std::mutex> lock(m_psemu_mutex);
 
-    // On the first app-function command from the PS1, set the active app slot so the BIOS
-    // dispatches 0x5B/0x5C to the correct function table. Deferring to this point (rather than
-    // doing it at Create()) keeps the ARM at slot 0 before the PS1 initiates contact, which
-    // prevents the app from running its initialization code and writing to flash prematurely.
-    if (!m_app_slot_set && m_cmd_byte_pos == 1u && (data_in == 0x5Bu || data_in == 0x5Cu))
+    // On the first PocketStation command from the PS1, set the active app slot. All commands from
+    // 0x58 upward (0x58 get-function-count, 0x5B/0x5C execute) dispatch via RAM[0xCE], so the slot
+    // must be set before the first 0x58 or the BIOS returns slot-0 (card-header) defaults and FF8
+    // never transitions from its 0x58-poll loop to the 0x5B/0x5C data exchange.
+    // Deferring to this point (rather than Create()) keeps the ARM at slot 0 until the PS1 makes
+    // contact, so the app cannot write flash before the PS1 game sets up the correct state.
+    // Retry every command until SetActiveAppSlot succeeds. The BIOS may not have set D0 yet
+    // when the first 0x58 arrives (the ARM background thread is still in its boot scan), so
+    // we keep trying until CE becomes non-zero. Once CE is set the slot is stable.
+    if (!m_app_slot_set && m_cmd_byte_pos == 1u && data_in >= 0x58u)
     {
       SetActiveAppSlot(m_ps);
-      m_app_slot_set = true;
+      const u8* const ram = psemu_ram_data(m_ps);
+      if (ram && ram[RAM_SLOT_CE] != 0u)
+        m_app_slot_set = true;
     }
 
     if (psemu_cpu_faulted(m_ps))
       WARNING_LOG("PocketStation: CPU faulted before byte {}.", m_cmd_byte_pos);
+    // The BIOS FIQ handles each byte with SELECT asserted, runs its phase-2 callback (which
+    // copies data and may write flash), then enters a SELECT-drop wait loop. ResetTransferState
+    // drops SELECT via psemu_com_set_selected after the PS1 releases /SEL, which is what exits
+    // that wait and triggers the end-of-command cleanup. Using psemu_com_transfer here (SELECT
+    // stays asserted) matches what the PS1 does and what mock_ps1_dispatch does in the tests.
     acked = (psemu_com_transfer(m_ps, data_in, data_out, PSEMU_COM_DEFAULT_TIMEOUT_CYCLES) != 0);
   }
 
   if (m_cmd_byte_pos == 1u)
   {
     INFO_LOG("PocketStation: cmd=0x{:02X} flag=0x{:02X} ACK={}", data_in, *data_out, acked);
-    if (data_in == 0x5Bu || data_in == 0x5Cu)
+    if (data_in >= 0x58u)
     {
-      // Log the active-app slot for app-function commands. The ARM thread is not held here; these
-      // RAM fields are written only during initialization and SetActiveAppSlot, not by the ARM
-      // thread, so reading them without the lock is safe.
       const u8* const ram = psemu_ram_data(m_ps);
       if (ram)
       {
         const u16 d0 = static_cast<u16>(ram[RAM_SLOT_D0]) | (static_cast<u16>(ram[RAM_SLOT_D0 + 1u]) << 8u);
-        INFO_LOG("PocketStation: 0x{:02X} dispatch: CE=0x{:02X} D0=0x{:04X}.", data_in, ram[RAM_SLOT_CE], d0);
+        VERBOSE_LOG("PocketStation: 0x{:02X} dispatch: CE=0x{:02X} D0=0x{:04X}.", data_in, ram[RAM_SLOT_CE], d0);
       }
     }
   }
@@ -405,17 +487,17 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
                                     m_cmd_in_progress == 0x59u || m_cmd_in_progress == 0x5Du ||
                                     m_cmd_in_progress == 0x5Bu || m_cmd_in_progress == 0x5Cu))
   {
-    INFO_LOG("PocketStation: 0x{:02X} byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_in_progress,
-             m_cmd_byte_pos, data_in, *data_out, acked);
+    VERBOSE_LOG("PocketStation: 0x{:02X} byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_in_progress,
+                m_cmd_byte_pos, data_in, *data_out, acked);
   }
   else if (m_cmd_byte_pos >= 2u && m_cmd_byte_pos <= 5u && m_cmd_in_progress == 0x57u)
-    INFO_LOG("PocketStation: 0x57 addr byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_byte_pos, data_in,
-             *data_out, acked);
+    VERBOSE_LOG("PocketStation: 0x57 addr byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_byte_pos, data_in,
+                *data_out, acked);
   else if (m_cmd_byte_pos >= 135u && m_cmd_in_progress == 0x57u)
-    INFO_LOG("PocketStation: 0x57 tail byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_byte_pos, data_in,
-             *data_out, acked);
+    VERBOSE_LOG("PocketStation: 0x57 tail byte {} in=0x{:02X} out=0x{:02X} ACK={}", m_cmd_byte_pos, data_in,
+                *data_out, acked);
   else if (!acked && m_cmd_byte_pos > 1u)
-    INFO_LOG("PocketStation: NACK at byte {} of current command (out=0x{:02X}).", m_cmd_byte_pos, *data_out);
+    VERBOSE_LOG("PocketStation: NACK at byte {} of current command (out=0x{:02X}).", m_cmd_byte_pos, *data_out);
 
   m_cmd_byte_pos++;
   if (!acked)
@@ -428,8 +510,6 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
 
 void PocketStation::ResetTransferState(bool was_accessed)
 {
-  // Save before clearing: the undock pulse below is conditional on the command type.
-  const u8 last_cmd = m_cmd_in_progress;
   m_cmd_byte_pos = 0u;
   m_cmd_in_progress = 0u;
 
@@ -440,26 +520,6 @@ void PocketStation::ResetTransferState(bool was_accessed)
       if (psemu_cpu_faulted(m_ps))
         ERROR_LOG("PocketStation: CPU fault at command end. Register state is invalid.");
       psemu_com_set_selected(m_ps, 0);
-
-      // Apply the INT_IOP undock pulse only after dispatch commands (0x5B/0x5C). The Chocobo
-      // World fn#1 handler checks INT_IOP == 0 before it writes to flash; this pulse satisfies
-      // that check. Other commands (0x52 reads, 0x57 page writes, 0x58 polls) do not have app
-      // handlers that gate on INT_IOP, so they do not need settle frames. Running the pulse after
-      // 0x57 caused the ARM to process parameter writes during the settle period, making those
-      // writes visible to SaveFlash and triggering spurious mid-session card saves.
-      if (last_cmd == 0x5Bu || last_cmd == 0x5Cu)
-      {
-        psemu_com_set_docked(m_ps, 0);
-        for (u32 f = 0u; f < COM_UNDOCK_FRAMES; f++)
-          psemu_run(m_ps, FRAME_CYCLES);
-        psemu_com_set_docked(m_ps, 1);
-        for (u32 f = 0u; f < DOCK_FRAMES; f++)
-        {
-          psemu_run(m_ps, FRAME_CYCLES);
-          if (psemu_com_is_enabled(m_ps))
-            break;
-        }
-      }
     }
     // Wake the ARM thread so the BIOS end-of-command path runs without waiting for the next
     // periodic tick.
@@ -524,8 +584,6 @@ void PocketStation::ExportQuicksave(const std::string& path) const
   //
   // The card flash (PSEMU_FLASH_SIZE bytes) is the content here, since the
   // PocketStation flash is the full memory card image in this host.
-  static constexpr u32 QUICKSAVE_VERSION = 7u;
-
   const size_t state_size = psemu_state_size(m_ps);
   std::vector<u8> buf(16u + state_size);
 

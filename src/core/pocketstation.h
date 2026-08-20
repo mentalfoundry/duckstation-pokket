@@ -43,9 +43,14 @@ public:
   //
   // slot is the memory card slot the device sits in. It picks the serial of the device, since two
   // devices do not share one.
+  //
+  // quicksave_path is optional. When non-empty, Create attempts to restore the machine state from
+  // that file before docking. A successful restore replaces the BIOS boot sequence: the app picks
+  // up exactly where it left off, including work RAM written by the previous session's 0x5C
+  // dispatches. The restore is skipped when the file is absent or was written for a different card.
   static std::unique_ptr<PocketStation> Create(std::span<const u8> bios,
                                                const MemoryCardImage::DataArray& flash, u32 slot,
-                                               Error* error);
+                                               const std::string& quicksave_path, Error* error);
 
   // Exchanges one byte with the console. Returns true when the device acknowledges.
   //
