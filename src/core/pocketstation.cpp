@@ -50,9 +50,31 @@ constexpr u32 ARM_IDLE_CHUNK = 256u;
 // ARM clock setting.
 constexpr u64 SELECT_BURST_CYCLES = ARM_IDLE_CHUNK * 32u;
 
+// Frames the BIOS needs after SELECT deasserts to complete a Write Sector flash program.
+// bu_test.c measures 30 BIOS-delay frames + 8 settle frames = 38 total for a data sector.
+// Directory sector writes are suspected to need more; 50 covers both with margin.
+constexpr u32 WRITE_SECTOR_SETTLE_FRAMES = 50u;
+
+// Frames to run after the exit-menu navigation before reading flash.
+// choco_exit_probe.c uses 120; 38 is the measured minimum for a single-sector write.
+constexpr u32 EXIT_SAVE_SETTLE_FRAMES = 120u;
+
 // pokketstation quicksave format version this build writes and accepts. Must match the version
 // written by ExportQuicksave.
-constexpr u32 QUICKSAVE_VERSION = 7u;
+constexpr u32 QUICKSAVE_VERSION = 8u;
+
+// FNV1A-32 over the full flash image. Any byte change — directory, save data, or app body —
+// invalidates the quicksave. psemu_content_identity_hash covers only the directory and icon,
+// which is insufficient: save-data writes change data blocks but not the directory.
+static u32 flash_full_hash(const u8* data, size_t size)
+{
+  constexpr u32 FNV_OFFSET = 0x811C9DC5u;
+  constexpr u32 FNV_PRIME  = 0x01000193u;
+  u32 h = FNV_OFFSET;
+  for (size_t i = 0; i < size; i++)
+    h = (h ^ data[i]) * FNV_PRIME;
+  return h;
+}
 
 } // namespace
 
@@ -172,16 +194,56 @@ void PocketStation::PrepareForSave()
   if (!m_ps)
     return;
 
-  // Set the docked flag to 0 so the exported state shows standalone mode.
-  psemu_com_set_docked(m_ps, 0);
-  for (u32 f = 0u; f < 10u; f++)
+  // Complete any in-flight BIOS flash write. The BIOS programs flash after SELECT deasserts,
+  // not during the Write Sector command. The ARM background thread runs those programming delay
+  // loops in real time. If the user quits DuckStation within 38 frames of the last Write Sector,
+  // the ARM thread stops before the loops finish and the write is lost. Run WRITE_SECTOR_SETTLE_FRAMES
+  // synchronously now so any pending write reaches flash before SaveFlash reads the result.
+  for (u32 f = 0u; f < WRITE_SECTOR_SETTLE_FRAMES; f++)
     psemu_run(m_ps, FRAME_CYCLES);
 
-  // Trigger the hold-save. The BIOS flash driver writes the app's state to flash when it
-  // detects a sustained action-button press. Runs at most 300 frames; stops on the first
-  // frame where flash changes.
+  // After the settle, CE may still be zero: the BIOS calls SetActiveAppSlot lazily on the
+  // first 0x58 command. If the card was written in this session (e.g. the app was just
+  // downloaded), the MCX magic can reach flash after that 0x58 call and leave CE unset.
+  // Scanning here gives the exit sequence a valid slot to dispatch against.
+  {
+    u8* const ram = psemu_ram_data(m_ps);
+    const u8* const fl2 = psemu_flash_data(m_ps);
+    if (ram && fl2 && ram[RAM_SLOT_CE] == 0u)
+    {
+      const u8 slot = FindFirstAppSlot(fl2);
+      if (slot != 0u)
+      {
+        ram[RAM_SLOT_CE] = slot;
+        INFO_LOG("PocketStation: set active slot to {} (PrepareForSave scan).", slot);
+      }
+    }
+  }
+
+  // Undock so the BIOS returns to standalone mode. The app's game loop must be running
+  // before the exit sequence can accumulate a Fire hold.
+  psemu_com_set_docked(m_ps, 0);
+
+  // Poll until the app is executing from its FLASH1 window (psemu_app_running), or until
+  // the timeout expires. The BIOS needs time after undock to leave the SIO command-wait
+  // path and resume the app's standalone game loop. 600 frames is the same budget that
+  // choco_exit_probe.c uses for its full cold-boot + navigation sequence; using the same
+  // bound here ensures parity with the probe tool's tested conditions.
+  u32 app_start_frames = 0u;
+  for (; app_start_frames < 600u; app_start_frames++)
+  {
+    psemu_run(m_ps, FRAME_CYCLES);
+    if (psemu_app_running(m_ps))
+      break;
+  }
+  INFO_LOG("PocketStation: app running={} after {} undock frames.", psemu_app_running(m_ps) ? 1 : 0,
+           app_start_frames);
+
+  // Trigger the exit-save. Hold Fire for 300 frames: apps that write flash on a sustained
+  // press finish here. If flash does not change, the app shows a continue/exit prompt — run
+  // the navigation sequence (release → Down → release → Fire → release) to select Exit.
   const u8* const fl = psemu_flash_data(m_ps);
-  if (fl)
+  if (fl && psemu_app_running(m_ps))
   {
     std::vector<u8> snap(fl, fl + PSEMU_FLASH_SIZE);
     psemu_set_buttons(m_ps, PSEMU_BUTTON_FIRE);
@@ -193,10 +255,37 @@ void PocketStation::PrepareForSave()
         break;
     }
     psemu_set_buttons(m_ps, 0u);
+
     if (hold_frames < 300u)
+    {
       INFO_LOG("PocketStation: hold-save triggered after {} frames.", hold_frames + 1u);
+    }
     else
-      INFO_LOG("PocketStation: hold-save: no flash change after 300 frames.");
+    {
+      // Fire hold alone did not write flash. Navigate the continue/exit prompt:
+      // release one frame, then Down to move the cursor to Exit, then Fire to confirm.
+      // Sequence matches choco_exit_probe.c: release/Down/release/Fire/release.
+      psemu_run(m_ps, FRAME_CYCLES);
+      psemu_set_buttons(m_ps, PSEMU_BUTTON_DOWN);
+      psemu_run(m_ps, FRAME_CYCLES);
+      psemu_set_buttons(m_ps, 0u);
+      psemu_run(m_ps, FRAME_CYCLES);
+      psemu_set_buttons(m_ps, PSEMU_BUTTON_FIRE);
+      psemu_run(m_ps, FRAME_CYCLES);
+      psemu_set_buttons(m_ps, 0u);
+
+      for (u32 f = 0u; f < EXIT_SAVE_SETTLE_FRAMES; f++)
+        psemu_run(m_ps, FRAME_CYCLES);
+
+      if (std::memcmp(psemu_flash_data(m_ps), snap.data(), PSEMU_FLASH_SIZE) != 0)
+        INFO_LOG("PocketStation: exit-save triggered.");
+      else
+        INFO_LOG("PocketStation: exit-save: no flash change after exit sequence.");
+    }
+  }
+  else if (fl)
+  {
+    INFO_LOG("PocketStation: app not running after undock; skipping exit sequence.");
   }
 
   // The dock interrupt handler sets ROT. The undock transition does not fire the handler:
@@ -255,7 +344,7 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
 
       const u8* const fl = psemu_flash_data(ret->m_ps);
       if (fl && qs_version == QUICKSAVE_VERSION && qs_app_size == static_cast<u32>(PSEMU_FLASH_SIZE) &&
-          psemu_content_identity_hash(fl, PSEMU_FLASH_SIZE) == qs_hash)
+          flash_full_hash(fl, PSEMU_FLASH_SIZE) == qs_hash)
       {
         if (psemu_load_state(ret->m_ps, qs_data->data() + 16, ret->m_state_size) == PSEMU_OK)
         {
@@ -577,20 +666,20 @@ void PocketStation::ExportQuicksave(const std::string& path) const
 
   // pokketstation quicksave format (slot 0):
   //   bytes  0-3   magic "PKQS"
-  //   bytes  4-7   version (little-endian u32) — 7 is the current frontend format
-  //   bytes  8-11  app_size: size of content passed to psemu_load_content (u32 LE)
-  //   bytes 12-15  app_hash: psemu_content_identity_hash of that content (u32 LE)
+  //   bytes  4-7   version (little-endian u32) — 8 is the current frontend format
+  //   bytes  8-11  app_size: PSEMU_FLASH_SIZE (u32 LE)
+  //   bytes 12-15  flash_hash: FNV1A-32 of the full flash image (u32 LE)
   //   bytes 16+    raw psemu state from psemu_save_state
   //
-  // The card flash (PSEMU_FLASH_SIZE bytes) is the content here, since the
-  // PocketStation flash is the full memory card image in this host.
+  // flash_hash covers every byte of the flash, not just the directory and icon.
+  // Any write to a data or save-data block changes the hash and invalidates the quicksave.
   const size_t state_size = psemu_state_size(m_ps);
   std::vector<u8> buf(16u + state_size);
 
   std::memcpy(buf.data(), "PKQS", 4);
   const u32 version  = QUICKSAVE_VERSION;
   const u32 app_size = static_cast<u32>(PSEMU_FLASH_SIZE);
-  const u32 app_hash = psemu_content_identity_hash(fl, PSEMU_FLASH_SIZE);
+  const u32 app_hash = flash_full_hash(fl, PSEMU_FLASH_SIZE);
   std::memcpy(buf.data() + 4,  &version,  4);
   std::memcpy(buf.data() + 8,  &app_size, 4);
   std::memcpy(buf.data() + 12, &app_hash, 4);
