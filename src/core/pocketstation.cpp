@@ -147,19 +147,12 @@ static void SetActiveAppSlot(psemu_t* ps)
     return;
   }
 
-  // The BIOS booted from an empty card (D0=0, CE=0) but the flash now holds an app. The PS1
-  // game installed the app during this session. Write D0 and set ComFlags bit 11 (start_file)
-  // so the BIOS main loop dispatches the app on the next frame — identical to what command
-  // 0x59 produces. Then run settle frames for the app's init code to complete.
-  INFO_LOG("PocketStation: app installed mid-session at slot {}; triggering start.", slot);
-  ram[RAM_SLOT_D0]      = slot;
-  ram[RAM_SLOT_D0 + 1u] = 0u;
-  ram[0x00C1u] |= static_cast<u8>(1u << 3u);  // ComFlags bit 11 (start_file), byte 1 of LE word at 0xC0
-  for (u32 i = 0u; i < BOOT_FRAMES; i++)
-    psemu_run(ps, FRAME_CYCLES);
-
-  ram[RAM_SLOT_CE] = slot;
-  INFO_LOG("PocketStation: set active slot to {}.", slot);
+  // The BIOS booted from an empty card (D0=0, CE=0) but the flash now holds an app installed
+  // during this session. D0 stays zero until the PS1 game sends command 0x59: that command's
+  // FIQ handler writes D0 = slot and sets ComFlags bit 11. The app runs on the next frame after
+  // the FIQ exits. On the next SetActiveAppSlot call (the command after 0x59), D0 is nonzero
+  // and the normal mirror-to-CE path sets the slot. No action is needed here.
+  INFO_LOG("PocketStation: app at slot {} installed mid-session; awaiting 0x59 from PS1.", slot);
 }
 
 PocketStation::PocketStation() = default;
