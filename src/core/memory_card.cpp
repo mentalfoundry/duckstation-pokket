@@ -46,14 +46,9 @@ MemoryCard::~MemoryCard()
 {
   if (m_pocketstation)
   {
-    // PrepareForSave stops the ARM thread, triggers the hold-save, and clears the LCD
-    // rotation bit. It must run before SaveFlash and ExportQuicksave so both see the
-    // final app state and the exported quicksave loads with standalone orientation.
     m_pocketstation->PrepareForSave();
     if (m_pocketstation->SaveFlash(&m_data))
       m_changed = true;
-    if (!m_path.empty())
-      m_pocketstation->ExportQuicksave(m_path + ".sav");
   }
   SaveIfChanged(false);
 }
@@ -77,8 +72,7 @@ void MemoryCard::Reset()
 
 bool MemoryCard::AttachPocketStation(std::span<const u8> bios, Error* error)
 {
-  const std::string quicksave_path = m_path.empty() ? std::string{} : m_path + ".sav";
-  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_data, m_index, quicksave_path, error);
+  std::unique_ptr<PocketStation> ps = PocketStation::Create(bios, m_data, m_index, error);
   if (!ps)
     return false;
 

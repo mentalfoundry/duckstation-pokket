@@ -44,13 +44,9 @@ public:
   // slot is the memory card slot the device sits in. It picks the serial of the device, since two
   // devices do not share one.
   //
-  // quicksave_path is optional. When non-empty, Create attempts to restore the machine state from
-  // that file before docking. A successful restore replaces the BIOS boot sequence: the app picks
-  // up exactly where it left off, including work RAM written by the previous session's 0x5C
-  // dispatches. The restore is skipped when the file is absent or was written for a different card.
   static std::unique_ptr<PocketStation> Create(std::span<const u8> bios,
                                                const MemoryCardImage::DataArray& flash, u32 slot,
-                                               const std::string& quicksave_path, Error* error);
+                                               Error* error);
 
   // Exchanges one byte with the console. Returns true when the device acknowledges.
   //
@@ -82,20 +78,14 @@ public:
 
   bool DoState(StateWrapper& sw);
 
-  // Stops the ARM thread, triggers the hold-save, clears the docked flag, and clears the LCD
-  // rotation bit. Call this before SaveFlash and ExportQuicksave so both see the final app state
-  // and the exported state loads with standalone orientation in pokketstation.
+  // Stops the ARM thread, triggers the exit-save sequence, clears the docked flag, and clears the
+  // LCD rotation bit. Call this before SaveFlash so SaveFlash reads the final app state.
   void PrepareForSave();
 
   // Copies the current 32x32 1bpp framebuffer into buf (128 bytes, 4 bytes per row, bit 0 is the
   // leftmost pixel, 0 = white, 1 = black). Returns true when the framebuffer changed since the
   // last call and buf was updated; returns false and leaves buf unchanged when there is no change.
   bool ReadFramebuffer(std::array<u8, PSEMU_LCD_WIDTH * PSEMU_LCD_HEIGHT / 8>& buf);
-
-  // Writes a pokketstation-compatible quicksave (slot 0 format) to path. The file holds the full
-  // machine state and can be loaded directly by the pokketstation desktop frontend when it opens
-  // the same card image. Call after the hold-save sequence so flash holds the latest app data.
-  void ExportQuicksave(const std::string& path) const;
 
 private:
   void ARMThreadFunc();

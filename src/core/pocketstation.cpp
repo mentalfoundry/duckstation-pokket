@@ -59,23 +59,6 @@ constexpr u32 WRITE_SECTOR_SETTLE_FRAMES = 50u;
 // choco_exit_probe.c uses 120; 38 is the measured minimum for a single-sector write.
 constexpr u32 EXIT_SAVE_SETTLE_FRAMES = 120u;
 
-// pokketstation quicksave format version this build writes and accepts. Must match the version
-// written by ExportQuicksave.
-constexpr u32 QUICKSAVE_VERSION = 8u;
-
-// FNV1A-32 over the full flash image. Any byte change — directory, save data, or app body —
-// invalidates the quicksave. psemu_content_identity_hash covers only the directory and icon,
-// which is insufficient: save-data writes change data blocks but not the directory.
-static u32 flash_full_hash(const u8* data, size_t size)
-{
-  constexpr u32 FNV_OFFSET = 0x811C9DC5u;
-  constexpr u32 FNV_PRIME  = 0x01000193u;
-  u32 h = FNV_OFFSET;
-  for (size_t i = 0; i < size; i++)
-    h = (h ^ data[i]) * FNV_PRIME;
-  return h;
-}
-
 } // namespace
 
 // Returns the directory slot (1-15) of the first PocketStation app on the card, or 0 when the
@@ -297,7 +280,7 @@ void PocketStation::PrepareForSave()
 
 std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
                                                      const MemoryCardImage::DataArray& flash, u32 slot,
-                                                     const std::string& quicksave_path, Error* error)
+                                                     Error* error)
 {
   std::unique_ptr<PocketStation> ret(new PocketStation());
 
@@ -326,59 +309,16 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
   ret->m_slot       = slot;
   ret->m_state_size = psemu_state_size(ret->m_ps);
 
-  // Attempt to restore from a prior-session quicksave. A successful restore replaces the BIOS
-  // boot sequence: work RAM (and all other machine state) is from the end of that session, so
-  // data written via 0x5C dispatches survives across DuckStation restarts without needing the
-  // app to commit it to flash during the session.
-  bool loaded_from_quicksave = false;
-  if (!quicksave_path.empty())
-  {
-    const auto qs_data = FileSystem::ReadBinaryFile(quicksave_path.c_str());
-    if (qs_data.has_value() && qs_data->size() >= 16u + ret->m_state_size &&
-        std::memcmp(qs_data->data(), "PKQS", 4) == 0)
-    {
-      u32 qs_version, qs_app_size, qs_hash;
-      std::memcpy(&qs_version,  qs_data->data() + 4,  4);
-      std::memcpy(&qs_app_size, qs_data->data() + 8,  4);
-      std::memcpy(&qs_hash,     qs_data->data() + 12, 4);
-
-      const u8* const fl = psemu_flash_data(ret->m_ps);
-      if (fl && qs_version == QUICKSAVE_VERSION && qs_app_size == static_cast<u32>(PSEMU_FLASH_SIZE) &&
-          flash_full_hash(fl, PSEMU_FLASH_SIZE) == qs_hash)
-      {
-        if (psemu_load_state(ret->m_ps, qs_data->data() + 16, ret->m_state_size) == PSEMU_OK)
-        {
-          loaded_from_quicksave = true;
-          INFO_LOG("PocketStation: state restored from quicksave {}.", quicksave_path);
-        }
-        else
-        {
-          WARNING_LOG("PocketStation: quicksave {} state load failed; booting fresh.", quicksave_path);
-        }
-      }
-      else
-      {
-        VERBOSE_LOG("PocketStation: quicksave {} is for a different card or version; booting fresh.",
-                    quicksave_path);
-      }
-    }
-  }
-
-  if (!loaded_from_quicksave)
-  {
-    psemu_reset(ret->m_ps);
-    // Before the machine runs: an app reads the serial when it makes a new save, so changing it
-    // after boot would not be seen consistently.
-    psemu_set_hardware_id(ret->m_ps, slot + 1);
-    for (u32 i = 0; i < BOOT_FRAMES; i++)
-      psemu_run(ret->m_ps, FRAME_CYCLES);
-  }
+  psemu_reset(ret->m_ps);
+  // Before the machine runs: an app reads the serial when it makes a new save, so changing it
+  // after boot would not be seen consistently.
+  psemu_set_hardware_id(ret->m_ps, slot + 1);
+  for (u32 i = 0; i < BOOT_FRAMES; i++)
+    psemu_run(ret->m_ps, FRAME_CYCLES);
 
   // The kernel enables communication from an interrupt handler, and that handler waits before it
   // reads the docking level again. So the condition arrives a frame or more after the call, and a
   // transfer before it would get no answer.
-  // After a quicksave restore the machine was saved in undocked state; the dock interrupt fires
-  // when we assert the dock line and re-enables COM, just as it does on a cold boot.
   psemu_com_set_docked(ret->m_ps, 1);
 
   bool enabled = false;
@@ -392,36 +332,13 @@ std::unique_ptr<PocketStation> PocketStation::Create(std::span<const u8> bios,
     }
   }
 
-  if (!enabled && loaded_from_quicksave)
-  {
-    // State was saved at an unusual point. Reload flash and try a cold boot.
-    WARNING_LOG("PocketStation: quicksave restore did not re-enable COM; falling back to cold boot.");
-    psemu_load_flash_image(ret->m_ps, flash.data(), flash.size());
-    psemu_reset(ret->m_ps);
-    psemu_set_hardware_id(ret->m_ps, slot + 1);
-    for (u32 i = 0; i < BOOT_FRAMES; i++)
-      psemu_run(ret->m_ps, FRAME_CYCLES);
-    psemu_com_set_docked(ret->m_ps, 1);
-    enabled = false;
-    for (u32 i = 0; i < DOCK_FRAMES; i++)
-    {
-      psemu_run(ret->m_ps, FRAME_CYCLES);
-      if (psemu_com_is_enabled(ret->m_ps))
-      {
-        enabled = true;
-        break;
-      }
-    }
-  }
-
   if (!enabled)
   {
     Error::SetStringView(error, "PocketStation BIOS did not enable communication after docking.");
     return nullptr;
   }
 
-  VERBOSE_LOG("PocketStation {} and docked, state size {} bytes.",
-              loaded_from_quicksave ? "state restored" : "booted", ret->m_state_size);
+  VERBOSE_LOG("PocketStation booted and docked, state size {} bytes.", ret->m_state_size);
 
   // All synchronous initialization is complete. Start the background ARM thread. From this point
   // on, all psemu calls on the main thread must hold m_psemu_mutex.
@@ -655,43 +572,6 @@ bool PocketStation::ReadFramebuffer(std::array<u8, PSEMU_LCD_WIDTH * PSEMU_LCD_H
   return true;
 }
 
-void PocketStation::ExportQuicksave(const std::string& path) const
-{
-  if (!m_ps)
-    return;
-
-  const u8* const fl = psemu_flash_data(m_ps);
-  if (!fl)
-    return;
-
-  // pokketstation quicksave format (slot 0):
-  //   bytes  0-3   magic "PKQS"
-  //   bytes  4-7   version (little-endian u32) — 8 is the current frontend format
-  //   bytes  8-11  app_size: PSEMU_FLASH_SIZE (u32 LE)
-  //   bytes 12-15  flash_hash: FNV1A-32 of the full flash image (u32 LE)
-  //   bytes 16+    raw psemu state from psemu_save_state
-  //
-  // flash_hash covers every byte of the flash, not just the directory and icon.
-  // Any write to a data or save-data block changes the hash and invalidates the quicksave.
-  const size_t state_size = psemu_state_size(m_ps);
-  std::vector<u8> buf(16u + state_size);
-
-  std::memcpy(buf.data(), "PKQS", 4);
-  const u32 version  = QUICKSAVE_VERSION;
-  const u32 app_size = static_cast<u32>(PSEMU_FLASH_SIZE);
-  const u32 app_hash = flash_full_hash(fl, PSEMU_FLASH_SIZE);
-  std::memcpy(buf.data() + 4,  &version,  4);
-  std::memcpy(buf.data() + 8,  &app_size, 4);
-  std::memcpy(buf.data() + 12, &app_hash, 4);
-
-  psemu_save_state(m_ps, buf.data() + 16, state_size);
-
-  Error error;
-  if (!FileSystem::WriteBinaryFile(path.c_str(), buf.data(), buf.size(), &error))
-    WARNING_LOG("PocketStation: failed to write quicksave to {}: {}", path, error.GetDescription());
-  else
-    INFO_LOG("PocketStation: quicksave written to {}.", path);
-}
 
 bool PocketStation::DoState(StateWrapper& sw)
 {
