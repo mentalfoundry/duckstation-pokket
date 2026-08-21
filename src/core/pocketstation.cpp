@@ -90,20 +90,20 @@ static u8 FindFirstAppSlot(const u8* flash_data)
 //
 // Checks the slot the BIOS selected during boot. When it is zero (no app found at boot), it
 // scans the flash directory directly. If a PocketStation app is present — meaning the PS1 game
-// installed it after the machine started — the machine reboots with the populated flash so the
-// BIOS can scan the new directory and start the app. Returns true when a reboot occurred; the
-// caller must discard the in-progress command and let the PS1 retry.
+// installed it after the machine started — it injects the app-launch signal into BIOS RAM (the
+// same write that command 0x59 makes: D0 = slot, ComFlags bit 11 = 1) and runs extra frames so
+// the BIOS dispatches the app and its init code completes before any dispatch command arrives.
 //
 // Called lazily — inside the mutex — on the first command >= 0x58 from the PS1. Deferring to
 // that point keeps the ARM thread at slot 0 (BIOS shell, no app) until the PS1 contacts the
 // device, so the app cannot write its flash save area before the PS1 game sets up the correct
 // initial state.
-static bool SetActiveAppSlot(psemu_t* ps, u32 slot)
+static void SetActiveAppSlot(psemu_t* ps)
 {
   u8* const ram = psemu_ram_data(ps);
   const u8* const flash = psemu_flash_data(ps);
   if (!ram || !flash)
-    return false;
+    return;
 
   const u16 d0 = static_cast<u16>(ram[RAM_SLOT_D0]) | (static_cast<u16>(ram[RAM_SLOT_D0 + 1u]) << 8u);
   const u8 bios_slot = (d0 != 0u) ? static_cast<u8>(d0) : ram[RAM_SLOT_CE];
@@ -125,7 +125,7 @@ static bool SetActiveAppSlot(psemu_t* ps, u32 slot)
     {
       INFO_LOG("PocketStation: kernel selected app slot {}.", bios_slot);
     }
-    return false;
+    return;
   }
 
   // Dump the card directory so the log shows the card layout at dispatch time.
@@ -140,29 +140,26 @@ static bool SetActiveAppSlot(psemu_t* ps, u32 slot)
                 safe(t0), safe(t1), safe(t2), safe(t3));
   }
 
-  const u8 scan_slot = FindFirstAppSlot(flash);
-  if (scan_slot == 0u)
+  const u8 slot = FindFirstAppSlot(flash);
+  if (slot == 0u)
   {
     INFO_LOG("PocketStation: no PocketStation app on card.");
-    return false;
+    return;
   }
 
   // The BIOS booted from an empty card (D0=0, CE=0) but the flash now holds an app. The PS1
-  // game installed the app during this session. Reboot so the BIOS finds the app, runs its
-  // directory scan, and starts the app before any dispatch command arrives.
-  INFO_LOG("PocketStation: app installed mid-session at slot {}; rebooting.", scan_slot);
-  psemu_reset(ps);
-  psemu_set_hardware_id(ps, slot + 1u);
+  // game installed the app during this session. Write D0 and set ComFlags bit 11 (start_file)
+  // so the BIOS main loop dispatches the app on the next frame — identical to what command
+  // 0x59 produces. Then run settle frames for the app's init code to complete.
+  INFO_LOG("PocketStation: app installed mid-session at slot {}; triggering start.", slot);
+  ram[RAM_SLOT_D0]      = slot;
+  ram[RAM_SLOT_D0 + 1u] = 0u;
+  ram[0x00C1u] |= static_cast<u8>(1u << 3u);  // ComFlags bit 11 (start_file), byte 1 of LE word at 0xC0
   for (u32 i = 0u; i < BOOT_FRAMES; i++)
     psemu_run(ps, FRAME_CYCLES);
-  psemu_com_set_docked(ps, 1);
-  for (u32 i = 0u; i < DOCK_FRAMES; i++)
-  {
-    psemu_run(ps, FRAME_CYCLES);
-    if (psemu_com_is_enabled(ps))
-      break;
-  }
-  return true;
+
+  ram[RAM_SLOT_CE] = slot;
+  INFO_LOG("PocketStation: set active slot to {}.", slot);
 }
 
 PocketStation::PocketStation() = default;
@@ -200,10 +197,9 @@ void PocketStation::PrepareForSave()
   for (u32 f = 0u; f < WRITE_SECTOR_SETTLE_FRAMES; f++)
     psemu_run(m_ps, FRAME_CYCLES);
 
-  // After the settle, CE may still be zero: the BIOS calls SetActiveAppSlot lazily on the
-  // first 0x58 command. If the card was written in this session (e.g. the app was just
-  // downloaded), the MCX magic can reach flash after that 0x58 call and leave CE unset.
-  // Scanning here gives the exit sequence a valid slot to dispatch against.
+  // After the settle, CE may still be zero if no command >= 0x58 arrived this session (the
+  // app was downloaded but the game never exchanged data). Scan now so the exit sequence has
+  // a valid slot to dispatch against.
   {
     u8* const ram = psemu_ram_data(m_ps);
     const u8* const fl2 = psemu_flash_data(m_ps);
@@ -470,24 +466,12 @@ bool PocketStation::Transfer(u8 data_in, u8* data_out)
     // Retry every command until SetActiveAppSlot succeeds. The BIOS may not have set D0 yet
     // when the first 0x58 arrives (the ARM background thread is still in its boot scan), so
     // keep retrying until CE becomes non-zero. Once CE is set the slot is stable.
-    // SetActiveAppSlot also handles the case where the PS1 game installs an app mid-session: it
-    // reboots the machine with the populated flash and returns true. Discard that command so the
-    // PS1 retries against the fresh, app-initialized BIOS.
     if (!m_app_slot_set && m_cmd_byte_pos == 1u && data_in >= 0x58u)
     {
-      const bool rebooted = SetActiveAppSlot(m_ps, m_slot);
+      SetActiveAppSlot(m_ps);
       const u8* const ram = psemu_ram_data(m_ps);
       if (ram && ram[RAM_SLOT_CE] != 0u)
         m_app_slot_set = true;
-      if (rebooted)
-      {
-        // The ARM just rebooted to initialize the newly-installed app. Discard this command
-        // so the PS1 retries from a clean state against the fresh BIOS.
-        m_cmd_byte_pos = 0u;
-        m_cmd_in_progress = 0u;
-        *data_out = 0x00u;
-        return false;
-      }
     }
 
     if (psemu_cpu_faulted(m_ps))
